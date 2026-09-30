@@ -1,4 +1,9 @@
-const { AudioPlayerStatus, VoiceConnectionStatus, createAudioPlayer } = require('@discordjs/voice');
+const {
+  AudioPlayerStatus,
+  VoiceConnectionStatus,
+  createAudioPlayer,
+  joinVoiceChannel: defaultJoinVoiceChannel,
+} = require('@discordjs/voice');
 const { createMusicError } = require('./errors');
 const {
   assertQueueCapacity,
@@ -7,13 +12,38 @@ const {
   assertSessionPlaying,
 } = require('./guards');
 const { createTrackResource } = require('./stream');
+const { computeBackoff, shouldReconnect } = require('./connectionLifecycle');
+const timing = require('./timing');
+const { MUSIC_CONFIG } = require('./constants');
 
 const IDLE_STATUS = AudioPlayerStatus.Idle;
-const DISCONNECT_GRACE_MS = 5000;
+const DISCONNECT_GRACE_MS = MUSIC_CONFIG.DISCONNECT_GRACE_MS;
+const RECONNECT_MAX_ATTEMPTS = MUSIC_CONFIG.RECONNECT_MAX_ATTEMPTS;
+const EMPTY_CHANNEL_GRACE_MS = MUSIC_CONFIG.EMPTY_CHANNEL_GRACE_MS;
 
 function logError(context, error) {
   const detail = error && error.message ? error.message : String(error);
   console.error(`❌ [música] ${context}`, detail);
+}
+
+function logInfo(message) {
+  console.log(`🎵 [música] ${message}`);
+}
+
+function logWarn(message) {
+  console.warn(`⚠️ [música] ${message}`);
+}
+
+function countChannelHumans(channel) {
+  if (!channel || !channel.members || typeof channel.members.forEach !== 'function') return null;
+
+  let humans = 0;
+
+  channel.members.forEach((member) => {
+    if (member && member.user && member.user.bot !== true) humans += 1;
+  });
+
+  return humans;
 }
 
 class GuildMusicSession {
@@ -28,6 +58,11 @@ class GuildMusicSession {
     this.createResource = typeof options.createResource === 'function' ? options.createResource : createTrackResource;
     this.hooks = options.hooks || {};
     this.textChannelId = options.textChannelId || null;
+    this.adapterCreator = options.adapterCreator || null;
+    this.targetChannelId = options.targetChannelId || null;
+    this.joinVoiceChannel = typeof options.joinVoiceChannel === 'function'
+      ? options.joinVoiceChannel
+      : defaultJoinVoiceChannel;
 
     this.connection = null;
     this.queue = [];
@@ -42,7 +77,19 @@ class GuildMusicSession {
     this._advanceCoversCurrent = false;
     this._pendingSkips = 0;
     this._tornDown = false;
-    this._disconnectTimer = null;
+
+    this._reconnectTimer = null;
+    this._reconnectAttempts = 0;
+    this._reconnecting = false;
+    this._emptyChannelTimer = null;
+    this._emptyChannelSource = null;
+    this._manualRemoval = false;
+    this._stopping = false;
+
+    this._boundConnection = null;
+    this._boundStateHandler = null;
+    this._boundErrorHandler = null;
+    this._audioProbeListener = null;
 
     this._onPlayerIdle = () => this._scheduleAdvance('player-idle');
     this._onPlayerError = (error) => {
@@ -98,6 +145,7 @@ class GuildMusicSession {
 
   add(track) {
     return this._enqueue(() => {
+      this._clearEmptyChannelTimer();
       assertQueueCapacity(this);
 
       const position = this.queue.length + 1;
@@ -163,6 +211,7 @@ class GuildMusicSession {
 
   destroy() {
     this.destroyed = true;
+    this._stopping = true;
 
     return this._enqueue(() => this._teardown(), true);
   }
@@ -185,6 +234,7 @@ class GuildMusicSession {
     }
 
     if (this.connection && this.connection !== connection) {
+      this._unbindConnection();
       this._destroyConnection(this.connection);
     }
 
@@ -198,9 +248,69 @@ class GuildMusicSession {
   detachConnection() {
     const connection = this.connection;
     this.connection = null;
-    this._clearDisconnectTimer();
+    this._unbindConnection();
+    this._clearReconnectTimer();
+    this._reconnecting = false;
+    this._clearEmptyChannelTimer();
 
     return connection;
+  }
+
+  handleVoiceStateUpdate(client, oldState, newState) {
+    if (this.destroyed) return;
+
+    const botId = client && client.user ? client.user.id : null;
+    if (!botId) return;
+
+    const oldId = oldState ? oldState.id : null;
+    const newId = newState ? newState.id : null;
+    const involvesBot = oldId === botId || newId === botId;
+
+    if (involvesBot) {
+      if (this._stopping) return;
+
+      const from = oldState ? oldState.channelId : null;
+      const to = newState ? newState.channelId : null;
+
+      if (from && !to) {
+        this._manualRemoval = true;
+        logInfo(`bot removido do canal de voz na guild ${this.guildId}; encerrando sessão e fila.`);
+        this.destroy().catch((error) => logError('falha ao encerrar sessão após remoção manual:', error));
+        return;
+      }
+
+      if (from && to && from !== to) {
+        this._manualRemoval = true;
+        logInfo(`bot movido de canal de voz na guild ${this.guildId}; encerrando sessão e fila.`);
+        this.destroy().catch((error) => logError('falha ao encerrar sessão após movimentação:', error));
+        return;
+      }
+
+      return;
+    }
+
+    const botChannelId = this.channelId;
+    if (!botChannelId) return;
+
+    const enteredBotChannel = newState && newState.channelId === botChannelId;
+    const leftBotChannel = oldState && oldState.channelId === botChannelId;
+
+    if (enteredBotChannel) {
+      this._clearEmptyChannelTimer();
+      return;
+    }
+
+    if (!leftBotChannel) return;
+
+    const channel = (oldState && oldState.channel) || (newState && newState.channel) || null;
+    const humans = countChannelHumans(channel);
+
+    if (humans === null) {
+      logWarn(`não foi possível verificar a ocupação do canal na guild ${this.guildId}; desconexão automática não agendada.`);
+      return;
+    }
+
+    if (humans === 0) this._scheduleEmptyChannelDisconnect(channel);
   }
 
   _scheduleAdvance(reason) {
@@ -258,17 +368,24 @@ class GuildMusicSession {
 
     let playback = null;
 
+    timing.mark(this.guildId, 'resource.begin');
+
     try {
       playback = await this.createResource(track, this);
     } catch (error) {
+      timing.mark(this.guildId, 'resource.end');
       this._handleTrackFailure(track, error);
       return;
     }
+
+    timing.mark(this.guildId, 'resource.end');
 
     if (this.destroyed) {
       this._safeKill(playback);
       return;
     }
+
+    timing.mark(this.guildId, 'play.call');
 
     try {
       this.player.play(playback.resource);
@@ -281,6 +398,7 @@ class GuildMusicSession {
     this._playback = playback;
     this.current = track;
     this.state = 'playing';
+    this._armAudioStartProbe();
     this._emit('onTrackStart', this, track);
   }
 
@@ -289,6 +407,8 @@ class GuildMusicSession {
     this.current = null;
     this.state = 'idle';
     this.lastError = error;
+
+    timing.mark(this.guildId, 'play.error');
 
     if (this.destroyed) return;
 
@@ -304,11 +424,38 @@ class GuildMusicSession {
     this._emit('onQueueFinish', this, 'track-error');
   }
 
+  _armAudioStartProbe() {
+    if (!timing.isEnabled()) return;
+
+    this._disarmAudioStartProbe();
+
+    const onStateChange = (_oldState, newState) => {
+      if (!newState) return;
+
+      if (newState.status === AudioPlayerStatus.Playing) {
+        timing.mark(this.guildId, 'play.audio');
+        this._disarmAudioStartProbe();
+      }
+    };
+
+    this._audioProbeListener = onStateChange;
+    this.player.on('stateChange', onStateChange);
+  }
+
+  _disarmAudioStartProbe() {
+    if (!this._audioProbeListener) return;
+
+    this.player.off('stateChange', this._audioProbeListener);
+    this._audioProbeListener = null;
+  }
+
   _releasePlayback() {
     const playback = this._playback;
 
     this._playback = null;
     this.current = null;
+
+    this._disarmAudioStartProbe();
 
     if (!playback) return null;
 
@@ -343,7 +490,10 @@ class GuildMusicSession {
     if (this._tornDown) return;
     this._tornDown = true;
 
-    this._clearDisconnectTimer();
+    this._clearReconnectTimer();
+    this._reconnecting = false;
+    this._clearEmptyChannelTimer();
+    this._disarmAudioStartProbe();
     this.queue.length = 0;
 
     try {
@@ -364,7 +514,9 @@ class GuildMusicSession {
     this.current = null;
     this.state = 'idle';
 
-    if (this.registry) this.registry.delete(this.guildId);
+    if (this.registry && this.registry.get(this.guildId) === this) {
+      this.registry.delete(this.guildId);
+    }
 
     this._emit('onDestroy', this);
   }
@@ -382,45 +534,208 @@ class GuildMusicSession {
   _bindConnection(connection) {
     if (typeof connection.on !== 'function') return;
 
-    connection.on('stateChange', (oldState, newState) => {
-      if (!newState) return;
+    this._unbindConnection();
+
+    const onStateChange = (_oldState, newState) => {
+      if (!newState || this.destroyed) return;
 
       if (newState.status === VoiceConnectionStatus.Ready) {
-        this._clearDisconnectTimer();
+        this._handleConnectionReady();
       } else if (newState.status === VoiceConnectionStatus.Disconnected) {
-        this._scheduleDisconnectTimeout();
+        this._handleConnectionDisconnected();
       } else if (newState.status === VoiceConnectionStatus.Destroyed) {
         this._handleConnectionDestroyed();
       }
-    });
+    };
 
-    connection.on('error', (error) => {
+    const onError = (error) => {
       this.lastError = error;
       logError(`conexão de voz errou na guild ${this.guildId}:`, error);
+    };
+
+    connection.on('stateChange', onStateChange);
+    connection.on('error', onError);
+
+    this._boundConnection = connection;
+    this._boundStateHandler = onStateChange;
+    this._boundErrorHandler = onError;
+  }
+
+  _unbindConnection() {
+    const connection = this._boundConnection;
+
+    if (connection) {
+      if (typeof connection.off === 'function') {
+        if (this._boundStateHandler) connection.off('stateChange', this._boundStateHandler);
+        if (this._boundErrorHandler) connection.off('error', this._boundErrorHandler);
+      } else if (typeof connection.removeListener === 'function') {
+        if (this._boundStateHandler) connection.removeListener('stateChange', this._boundStateHandler);
+        if (this._boundErrorHandler) connection.removeListener('error', this._boundErrorHandler);
+      }
+    }
+
+    this._boundConnection = null;
+    this._boundStateHandler = null;
+    this._boundErrorHandler = null;
+  }
+
+  _reconnectGuard() {
+    return shouldReconnect({
+      destroyed: this.destroyed,
+      manualRemoval: this._manualRemoval,
+      stopping: this._stopping,
     });
   }
 
-  _scheduleDisconnectTimeout() {
-    if (this._disconnectTimer || this.destroyed) return;
+  _handleConnectionReady() {
+    const wasReconnecting = this._reconnecting;
+    const attempts = this._reconnectAttempts;
 
-    this._disconnectTimer = setTimeout(() => {
-      this._disconnectTimer = null;
+    this._clearReconnectTimer();
+    this._reconnecting = false;
+    this._reconnectAttempts = 0;
 
-      if (this.destroyed) return;
-      if (this.connection && this.connection.state && this.connection.state.status === VoiceConnectionStatus.Ready) return;
-
-      logError(`conexão de voz não recuperada na guild ${this.guildId}; encerrando sessão.`, 'timeout');
-      this.destroy().catch((error) => logError('falha ao encerrar sessão após desconexão:', error));
-    }, DISCONNECT_GRACE_MS);
-
-    if (typeof this._disconnectTimer.unref === 'function') this._disconnectTimer.unref();
+    if (wasReconnecting) {
+      logInfo(`conexão restaurada na guild ${this.guildId} após ${attempts} tentativa(s).`);
+    }
   }
 
-  _clearDisconnectTimer() {
-    if (!this._disconnectTimer) return;
+  _handleConnectionDisconnected() {
+    if (!this._reconnectGuard()) return;
 
-    clearTimeout(this._disconnectTimer);
-    this._disconnectTimer = null;
+    if (this._reconnecting) {
+      if (this._reconnectAttempts >= RECONNECT_MAX_ATTEMPTS) {
+        this._giveUpReconnect(`reconexão falhou após ${this._reconnectAttempts} tentativa(s)`);
+        return;
+      }
+
+      if (!this._reconnectTimer) this._scheduleReconnectAttempt();
+      return;
+    }
+
+    logWarn(`conexão perdida na guild ${this.guildId}; aguardando ${DISCONNECT_GRACE_MS}ms antes de reconectar.`);
+
+    this._reconnecting = true;
+    this._reconnectAttempts = 0;
+    this._reconnectTimer = setTimeout(() => this._attemptReconnect(), DISCONNECT_GRACE_MS);
+
+    if (typeof this._reconnectTimer.unref === 'function') this._reconnectTimer.unref();
+  }
+
+  _scheduleReconnectAttempt() {
+    if (this._reconnectTimer) return;
+    if (!this._reconnectGuard()) return;
+
+    const delay = computeBackoff(this._reconnectAttempts);
+    this._reconnectTimer = setTimeout(() => this._attemptReconnect(), delay);
+
+    if (typeof this._reconnectTimer.unref === 'function') this._reconnectTimer.unref();
+  }
+
+  _attemptReconnect() {
+    this._reconnectTimer = null;
+
+    if (!this._reconnectGuard()) return;
+
+    if (this.connection && this.connection.state && this.connection.state.status === VoiceConnectionStatus.Ready) {
+      this._handleConnectionReady();
+      return;
+    }
+
+    if (!this.adapterCreator) {
+      this._giveUpReconnect('adapterCreator indisponível para reconexão');
+      return;
+    }
+
+    const channelId = this.channelId || this.targetChannelId;
+
+    if (!channelId) {
+      this._giveUpReconnect('canal de voz de destino desconhecido');
+      return;
+    }
+
+    this._reconnectAttempts += 1;
+
+    if (this._reconnectAttempts > RECONNECT_MAX_ATTEMPTS) {
+      this._giveUpReconnect(`reconexão falhou após ${RECONNECT_MAX_ATTEMPTS} tentativa(s)`);
+      return;
+    }
+
+    logInfo(`reconexão tentativa ${this._reconnectAttempts}/${RECONNECT_MAX_ATTEMPTS} na guild ${this.guildId}.`);
+
+    try {
+      const connection = this.joinVoiceChannel({
+        channelId,
+        guildId: this.guildId,
+        adapterCreator: this.adapterCreator,
+        selfDeaf: true,
+      });
+
+      this.attachConnection(connection);
+    } catch (error) {
+      logError(`falha ao tentar reconectar na guild ${this.guildId}:`, error);
+      this._scheduleReconnectAttempt();
+    }
+  }
+
+  _giveUpReconnect(reason) {
+    this._clearReconnectTimer();
+    this._reconnecting = false;
+
+    logWarn(`reconexão abortada na guild ${this.guildId}: ${reason}; encerrando sessão.`);
+    this.destroy().catch((error) => logError('falha ao encerrar sessão após reconexão:', error));
+  }
+
+  _clearReconnectTimer() {
+    if (!this._reconnectTimer) return;
+
+    clearTimeout(this._reconnectTimer);
+    this._reconnectTimer = null;
+  }
+
+  _scheduleEmptyChannelDisconnect(channel) {
+    if (this.destroyed || this._emptyChannelTimer) return;
+
+    this._emptyChannelSource = channel || null;
+    logInfo(`canal de voz sem usuários na guild ${this.guildId}; desconectando em ${EMPTY_CHANNEL_GRACE_MS / 1000}s.`);
+
+    this._emptyChannelTimer = setTimeout(() => this._onEmptyChannelTimeout(), EMPTY_CHANNEL_GRACE_MS);
+
+    if (typeof this._emptyChannelTimer.unref === 'function') this._emptyChannelTimer.unref();
+  }
+
+  _onEmptyChannelTimeout() {
+    this._emptyChannelTimer = null;
+
+    if (this.destroyed) return;
+
+    const channel = this._emptyChannelSource;
+    this._emptyChannelSource = null;
+
+    if (channel) {
+      const humans = countChannelHumans(channel);
+
+      if (humans === null) {
+        logWarn(`não foi possível confirmar a ocupação do canal na guild ${this.guildId}; desconexão automática cancelada.`);
+        return;
+      }
+
+      if (humans > 0) return;
+    }
+
+    logInfo(`canal de voz vazio por ${EMPTY_CHANNEL_GRACE_MS / 1000}s na guild ${this.guildId}; desconectando.`);
+    this.destroy().catch((error) => logError('falha ao desconectar de canal vazio:', error));
+  }
+
+  _clearEmptyChannelTimer() {
+    if (!this._emptyChannelTimer) {
+      this._emptyChannelSource = null;
+      return;
+    }
+
+    clearTimeout(this._emptyChannelTimer);
+    this._emptyChannelTimer = null;
+    this._emptyChannelSource = null;
   }
 
   _handleConnectionDestroyed() {

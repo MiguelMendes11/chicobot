@@ -34,6 +34,7 @@ const MUSIC_ERROR_MESSAGES = Object.freeze({
   YT_DLP_NOT_FOUND: 'yt-dlp não encontrado. Instale com "winget install yt-dlp.yt-dlp" ou defina YT_DLP_PATH no .env.',
   YT_DLP_TIMEOUT: 'O yt-dlp demorou demais para responder. Tente novamente.',
   YT_DLP_FAILED: 'Falha ao consultar o yt-dlp. Atualize o yt-dlp e tente novamente.',
+  CONNECTION_TIMEOUT: 'Não foi possível conectar ao canal de voz a tempo. Tente novamente.',
   STREAM_UNAVAILABLE: 'Não foi possível abrir o stream de áudio dessa música.',
   METADATA_INVALID: 'O yt-dlp retornou dados inválidos para essa mídia.',
 });

@@ -1,6 +1,7 @@
 const { SlashCommandBuilder } = require('discord.js');
 const music = require('../services/music');
 const source = require('../services/music/source');
+const timing = require('../services/music/timing');
 const {
   assertInteractionInGuild,
   assertMemberInVoice,
@@ -21,8 +22,12 @@ module.exports = {
         .setMaxLength(300)
     ),
   async execute(interaction) {
+    let guildId = null;
+
     try {
-      const guildId = assertInteractionInGuild(interaction);
+      guildId = assertInteractionInGuild(interaction);
+      timing.begin(guildId);
+
       const memberChannel = assertMemberInVoice(interaction);
 
       const session = music.getSession(guildId);
@@ -36,9 +41,11 @@ module.exports = {
       await interaction.deferReply();
       await interaction.editReply({ content: '🔍 Buscando música no YouTube…' });
 
+      timing.mark(guildId, 'resolve.begin');
       const track = await source.resolveQuery(query, { requestedBy: interaction.user.tag });
+      timing.mark(guildId, 'resolve.end');
 
-      music.join({
+      await music.join({
         guildId,
         channelId: memberChannel.id,
         adapterCreator: interaction.guild.voiceAdapterCreator,
@@ -53,7 +60,9 @@ module.exports = {
         : `➕ Adicionada na fila na posição **${result.position}**: ${label} · fila com ${result.queueLength} música(s)`;
 
       await interaction.editReply({ content });
+      timing.finish(guildId, { pending: result.started });
     } catch (error) {
+      if (guildId) timing.finish(guildId);
       await replyMusicError(interaction, error);
     }
   },

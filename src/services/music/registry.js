@@ -18,7 +18,9 @@ class MusicRegistry {
   getOrCreate(guildId, factory) {
     const existing = this.get(guildId);
 
-    if (existing) return existing;
+    if (existing && !existing.destroyed) return existing;
+
+    if (existing) this.sessions.delete(guildId);
 
     const created = factory(guildId);
     this.sessions.set(guildId, created);
