@@ -1,7 +1,8 @@
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const music = require('../services/music');
 const { assertInteractionInGuild, assertSameVoiceChannel } = require('../services/music/guards');
-const { replyMusicError, formatTrack } = require('../utils/musicInteraction');
+const { replyMusicError } = require('../utils/musicInteraction');
+const { skippedMessage } = require('../utils/embeds');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -15,9 +16,11 @@ module.exports = {
       assertSameVoiceChannel(interaction, session.channelId);
 
       const current = session.current;
+      const next = session.queue.length > 0 ? session.queue[0] : null;
+
       await session.skip();
 
-      await interaction.reply({ content: `⏭️ Pulando ${formatTrack(current)}.`, flags: MessageFlags.Ephemeral });
+      await interaction.reply({ content: skippedMessage(current, next), flags: MessageFlags.Ephemeral });
     } catch (error) {
       await replyMusicError(interaction, error);
     }

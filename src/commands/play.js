@@ -8,7 +8,8 @@ const {
   assertSameVoiceChannel,
   assertBotCanConnect,
 } = require('../services/music/guards');
-const { replyMusicError, formatTrack } = require('../utils/musicInteraction');
+const { replyMusicError } = require('../utils/musicInteraction');
+const { buildNowPlayingEmbed, buildQueuedEmbed } = require('../utils/embeds');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -61,13 +62,22 @@ module.exports = {
         throw error;
       }
 
-      const label = `${formatTrack(track)} · pedido por ${track.requestedBy}`;
+      const embed = result.started
+        ? buildNowPlayingEmbed({
+            track,
+            state: 'playing',
+            progress: null,
+            queueLength: result.queueLength,
+            client: interaction.client,
+          })
+        : buildQueuedEmbed({
+            track,
+            position: result.position,
+            queueLength: result.queueLength,
+            client: interaction.client,
+          });
 
-      const content = result.started
-        ? `▶️ Tocando agora: ${label}`
-        : `➕ Adicionada na fila na posição **${result.position}**: ${label} · fila com ${result.queueLength} música(s)`;
-
-      await interaction.editReply({ content });
+      await interaction.editReply({ content: '', embeds: [embed] });
       timing.finish(guildId, { pending: result.started });
     } catch (error) {
       if (guildId) timing.finish(guildId);

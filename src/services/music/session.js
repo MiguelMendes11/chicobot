@@ -47,6 +47,12 @@ function countChannelHumans(channel) {
   return humans;
 }
 
+function clampProgressSeconds(seconds, durationSeconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return 0;
+  if (Number.isFinite(durationSeconds) && durationSeconds >= 0 && seconds > durationSeconds) return durationSeconds;
+  return seconds;
+}
+
 class GuildMusicSession {
   constructor(guildId, options = {}) {
     if (!guildId || typeof guildId !== 'string') {
@@ -107,6 +113,25 @@ class GuildMusicSession {
     return this.connection.joinConfig.channelId || null;
   }
 
+  getProgress() {
+    if (!this.current) return { positionSeconds: 0, durationSeconds: null, percent: null };
+
+    const durationSeconds =
+      Number.isFinite(this.current.duration) && this.current.duration >= 0 ? this.current.duration : null;
+
+    const rawMs = this.player && this.player.state ? this.player.state.playbackDuration : null;
+    const positionSeconds = Number.isFinite(rawMs)
+      ? Math.round(clampProgressSeconds(rawMs / 1000, durationSeconds) * 100) / 100
+      : 0;
+
+    const percent =
+      durationSeconds && durationSeconds > 0
+        ? Math.min(100, Math.max(0, Math.round((positionSeconds / durationSeconds) * 100)))
+        : null;
+
+    return { positionSeconds, durationSeconds, percent };
+  }
+
   snapshot() {
     return {
       guildId: this.guildId,
@@ -117,6 +142,7 @@ class GuildMusicSession {
       channelId: this.channelId,
       textChannelId: this.textChannelId,
       destroyed: this.destroyed,
+      progress: this.getProgress(),
     };
   }
 

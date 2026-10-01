@@ -80,6 +80,17 @@ function pickEntry(payload) {
   return payload;
 }
 
+function pickThumbnail(entry) {
+  if (typeof entry.thumbnail === 'string' && entry.thumbnail) return entry.thumbnail;
+
+  if (Array.isArray(entry.thumbnails)) {
+    const last = entry.thumbnails.filter((item) => item && typeof item.url === 'string' && item.url).pop();
+    if (last) return last.url;
+  }
+
+  return null;
+}
+
 function buildTrack(entry, requestedBy) {
   if (!entry || typeof entry !== 'object') throw createMusicError('METADATA_INVALID');
 
@@ -110,6 +121,7 @@ function buildTrack(entry, requestedBy) {
     duration,
     source: 'youtube',
     requestedBy: requestedBy || null,
+    thumbnail: pickThumbnail(entry),
   });
 }
 

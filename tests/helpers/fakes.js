@@ -55,7 +55,7 @@ function createFakePlayer({ status = 'idle' } = {}) {
   const emitter = new EventEmitter();
 
   const player = {
-    state: { status },
+    state: { status, playbackDuration: 0 },
     playCalls: [],
     stopCalls: 0,
     pauseCalls: 0,
@@ -77,7 +77,7 @@ function createFakePlayer({ status = 'idle' } = {}) {
     play(resource) {
       player.playCalls.push(resource);
       const previous = player.state;
-      player.state = { status: 'buffering' };
+      player.state = { status: 'buffering', playbackDuration: 0 };
       emitter.emit('stateChange', previous, player.state);
       emitter.emit('buffering');
       return player;
@@ -91,7 +91,7 @@ function createFakePlayer({ status = 'idle' } = {}) {
       player.pauseCalls += 1;
       if (player.state.status !== 'playing') return false;
       const previous = player.state;
-      player.state = { status: 'paused' };
+      player.state = { ...player.state, status: 'paused' };
       emitter.emit('stateChange', previous, player.state);
       emitter.emit('paused');
       return true;
@@ -100,16 +100,23 @@ function createFakePlayer({ status = 'idle' } = {}) {
       player.unpauseCalls += 1;
       if (player.state.status !== 'paused') return false;
       const previous = player.state;
-      player.state = { status: 'playing' };
+      player.state = { ...player.state, status: 'playing' };
       emitter.emit('stateChange', previous, player.state);
       emitter.emit('playing');
       return true;
     },
     setState(nextStatus) {
       const previous = player.state;
-      player.state = { status: nextStatus };
+      player.state =
+        nextStatus === 'idle'
+          ? { status: nextStatus }
+          : { ...player.state, status: nextStatus, playbackDuration: player.state.playbackDuration || 0 };
       emitter.emit('stateChange', previous, player.state);
       emitter.emit(nextStatus);
+    },
+    advancePlayback(ms) {
+      const delta = Number.isFinite(ms) ? ms : 0;
+      player.state = { ...player.state, playbackDuration: (player.state.playbackDuration || 0) + delta };
     },
     emitIdle() {
       player.setState('idle');

@@ -2,6 +2,7 @@ const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const music = require('../services/music');
 const { assertInteractionInGuild, assertSameVoiceChannel } = require('../services/music/guards');
 const { replyMusicError } = require('../utils/musicInteraction');
+const { stoppedMessage } = require('../utils/embeds');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -16,10 +17,7 @@ module.exports = {
 
       await music.stop(guildId);
 
-      await interaction.reply({
-        content: '⏹️ Fila limpa. Desconectando do canal de voz.',
-        flags: MessageFlags.Ephemeral,
-      });
+      await interaction.reply({ content: stoppedMessage(), flags: MessageFlags.Ephemeral });
     } catch (error) {
       await replyMusicError(interaction, error);
     }

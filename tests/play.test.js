@@ -85,9 +85,17 @@ describe('/play', () => {
     expect(order).toEqual(['resolve', 'join', 'add']);
     expect(interaction.deferReply).toHaveBeenCalledTimes(1);
     expect(interaction.editReply).toHaveBeenNthCalledWith(1, { content: '🔍 Buscando música no YouTube…' });
-    expect(interaction.editReply).toHaveBeenLastCalledWith(
-      expect.objectContaining({ content: expect.stringContaining('▶️ Tocando agora:') })
-    );
+
+    const lastPayload = interaction.editReply.mock.calls.at(-1)[0];
+    const embed = lastPayload.embeds[0].toJSON();
+
+    expect(lastPayload.content).toBe('');
+    expect(embed.title).toBe('Música de teste');
+    expect(embed.url).toBe('https://www.youtube.com/watch?v=track-1');
+    expect(embed.color).toBe(0x3b82f6);
+    expect(embed.author.name).toBe('ChicoBot • Tocando agora');
+    expect(embed.fields.map((field) => field.name)).toContain('⏱️ Progresso');
+    expect(embed.fields.find((field) => field.name === '🎧 Pedido por').value).toBe('tester#0001');
     expect(console.log.mock.calls.some((args) => String(args[0]).includes('[timing]'))).toBe(false);
   });
 
@@ -157,8 +165,13 @@ describe('/play', () => {
     await play.execute(interaction);
 
     const lastCall = interaction.editReply.mock.calls.at(-1)[0];
-    expect(lastCall.content).toContain('Adicionada na fila na posição **3**');
-    expect(lastCall.content).toContain('fila com 5 música(s)');
+    const embed = lastCall.embeds[0].toJSON();
+
+    expect(embed.author.name).toBe('ChicoBot • Adicionada à fila');
+    expect(embed.title).toBe('Música de teste');
+    expect(embed.color).toBe(0x3b82f6);
+    expect(embed.fields.find((field) => field.name === '📍 Posição').value).toBe('#3');
+    expect(embed.fields.find((field) => field.name === '📋 Fila').value).toBe('5 música(s)');
   });
 
   it('MUSIC_DEBUG_TIMING=true emite a linha de timing no console', async () => {

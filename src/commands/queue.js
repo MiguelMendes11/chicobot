@@ -1,8 +1,10 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder } = require('discord.js');
 const music = require('../services/music');
 const { assertInteractionInGuild } = require('../services/music/guards');
+const { createMusicError } = require('../services/music/errors');
 const { MUSIC_CONFIG } = require('../services/music/constants');
-const { replyMusicError, formatTrack } = require('../utils/musicInteraction');
+const { replyMusicError } = require('../utils/musicInteraction');
+const { buildQueueEmbed } = require('../utils/embeds');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -11,36 +13,16 @@ module.exports = {
   async execute(interaction) {
     try {
       const guildId = assertInteractionInGuild(interaction);
-      const session = music.requireSession(guildId);
-      const snapshot = session.snapshot();
+      const session = music.getSession(guildId);
 
-      const preview = MUSIC_CONFIG.MAX_QUEUE_PREVIEW;
-      const upcoming = snapshot.queue.slice(0, preview);
-      const remaining = snapshot.queue.length - upcoming.length;
+      if (!session || session.destroyed) throw createMusicError('NO_PLAYBACK');
 
-      const lines = upcoming.map((item, index) => `${index + 1}. ${formatTrack(item)}`);
-
-      if (lines.length === 0) lines.push('*Nada na fila.*');
-      if (remaining > 0) lines.push(`… e mais ${remaining} na fila.`);
-
-      const status = snapshot.state === 'paused' ? '⏸️' : '▶️';
-      const author = interaction.guild ? `🎵 Fila de música — ${interaction.guild.name}` : '🎵 Fila de música';
-      const description = [
-        `${status} Tocando agora: ${formatTrack(snapshot.current)}`,
-        snapshot.current && snapshot.current.requestedBy
-          ? `Pedido por **${snapshot.current.requestedBy}**`
-          : '',
-        '**Próximas:**',
-        ...lines,
-      ]
-        .filter(Boolean)
-        .join('\n');
-
-      const embed = new EmbedBuilder()
-        .setColor(0x5865f2)
-        .setAuthor({ name: author })
-        .setDescription(description)
-        .setFooter({ text: `${snapshot.queue.length} na fila` });
+      const embed = buildQueueEmbed({
+        snapshot: session.snapshot(),
+        guildName: interaction.guild ? interaction.guild.name : null,
+        client: interaction.client,
+        previewLimit: MUSIC_CONFIG.MAX_QUEUE_PREVIEW,
+      });
 
       await interaction.reply({ embeds: [embed] });
     } catch (error) {

@@ -3,6 +3,7 @@ const GuildMusicSession = require('./session');
 const { assertSessionActive } = require('./guards');
 const { waitForConnectionReady } = require('./connectionLifecycle');
 const timing = require('./timing');
+const presence = require('../presence');
 const voice = require('@discordjs/voice');
 
 const registry = new MusicRegistry();
@@ -33,7 +34,12 @@ function requireSession(guildId) {
 function getOrCreateSession(guildId, options = {}) {
   return registry.getOrCreate(
     guildId,
-    (id) => new GuildMusicSession(id, { ...options, registry })
+    (id) =>
+      new GuildMusicSession(id, {
+        ...options,
+        registry,
+        hooks: { ...presence.hooks, ...(options.hooks || {}) },
+      })
   );
 }
 
@@ -169,6 +175,7 @@ function snapshot(guildId) {
       channelId: null,
       textChannelId: null,
       destroyed: false,
+      progress: { positionSeconds: 0, durationSeconds: null, percent: null },
     };
   }
 

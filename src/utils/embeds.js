@@ -1,0 +1,240 @@
+const { EmbedBuilder } = require('discord.js');
+const { formatDuration, formatTitle } = require('./musicInteraction');
+
+const THEME = Object.freeze({
+  colors: Object.freeze({ music: 0x3b82f6, paused: 0x9aa0a6 }),
+  brand: 'ChicoBot',
+  idleActivity: 'ChicoBot • digite /play',
+  activityTitleMax: 128,
+  embedTitleMax: 256,
+  progressSegments: 12,
+});
+
+const STATUS = Object.freeze({
+  playing: Object.freeze({ label: 'Tocando agora', emoji: '▶️' }),
+  loading: Object.freeze({ label: 'Preparando…', emoji: '🔃' }),
+  paused: Object.freeze({ label: 'Pausado', emoji: '⏸️' }),
+  idle: Object.freeze({ label: 'Nada tocando', emoji: '⏹️' }),
+});
+
+function statusOf(state) {
+  return STATUS[state] || STATUS.playing;
+}
+
+function colorOf(state) {
+  return state === 'paused' ? THEME.colors.paused : THEME.colors.music;
+}
+
+function truncate(value, max) {
+  const text = value === null || value === undefined ? '' : String(value);
+  const limit = Number.isFinite(max) ? Math.floor(max) : 0;
+
+  if (limit <= 0) return '';
+
+  const chars = Array.from(text);
+  if (chars.length <= limit) return text;
+  if (limit === 1) return '…';
+
+  return `${chars.slice(0, limit - 1).join('')}…`;
+}
+
+function clampSeconds(value, durationSeconds) {
+  if (!Number.isFinite(value) || value < 0) return 0;
+  if (Number.isFinite(durationSeconds) && durationSeconds >= 0 && value > durationSeconds) return durationSeconds;
+  return value;
+}
+
+function percentOf(positionSeconds, durationSeconds) {
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) return null;
+  return Math.min(100, Math.max(0, Math.round((positionSeconds / durationSeconds) * 100)));
+}
+
+function progressBar(positionSeconds, durationSeconds, size = THEME.progressSegments) {
+  const segments = Number.isFinite(size) && size > 0 ? Math.floor(size) : THEME.progressSegments;
+
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) return null;
+
+  const position = clampSeconds(positionSeconds, durationSeconds);
+  const filled = Math.round((position / durationSeconds) * segments);
+
+  return `${'▬'.repeat(filled)}${'○'.repeat(segments - filled)}`;
+}
+
+function trackLink(track, maxTitle = 180) {
+  if (!track) return '*Nada tocando.*';
+
+  return `**[${formatTitle(truncate(track.title, maxTitle))}](${track.url})** (${formatDuration(track.duration)})`;
+}
+
+function pickDuration(progress, track) {
+  if (progress && Number.isFinite(progress.durationSeconds) && progress.durationSeconds >= 0) {
+    return progress.durationSeconds;
+  }
+
+  if (track && Number.isFinite(track.duration) && track.duration >= 0) return track.duration;
+
+  return null;
+}
+
+function pickPosition(progress, durationSeconds) {
+  if (progress && Number.isFinite(progress.positionSeconds)) {
+    return clampSeconds(progress.positionSeconds, durationSeconds ?? undefined);
+  }
+
+  return 0;
+}
+
+function progressText(progress, track) {
+  const duration = pickDuration(progress, track);
+  const position = pickPosition(progress, duration);
+
+  if (!Number.isFinite(duration) || duration <= 0) return `${formatDuration(position)} / —`;
+
+  const percent = percentOf(position, duration);
+  const lines = [`${formatDuration(position)} / ${formatDuration(duration)} • ${percent}%`];
+  const bar = progressBar(position, duration);
+
+  if (bar) lines.push(bar);
+
+  return lines.join('\n');
+}
+
+function applyAuthor(embed, name, client) {
+  const authorName = truncate(name, THEME.embedTitleMax);
+  const user = client && client.user;
+  const iconURL = user && typeof user.displayAvatarURL === 'function' ? user.displayAvatarURL() : null;
+
+  return iconURL ? embed.setAuthor({ name: authorName, iconURL }) : embed.setAuthor({ name: authorName });
+}
+
+function applyFooter(embed, info) {
+  return embed.setFooter({ text: truncate(`${THEME.brand} • ${info}`, 2048) });
+}
+
+function requesterOf(track) {
+  return track && track.requestedBy ? truncate(track.requestedBy, 256) : null;
+}
+
+function buildNowPlayingEmbed({ track, state = 'playing', progress = null, queueLength = 0, client = null } = {}) {
+  const status = statusOf(state);
+  const embed = new EmbedBuilder().setColor(colorOf(state));
+
+  applyAuthor(embed, `${THEME.brand} • ${status.label}`, client);
+
+  embed.setTitle(truncate(track ? track.title : status.label, THEME.embedTitleMax));
+  if (track && track.url) embed.setURL(track.url);
+  if (track && track.thumbnail) embed.setThumbnail(track.thumbnail);
+
+  const requester = requesterOf(track);
+
+  embed.addFields(
+    { name: '⏱️ Progresso', value: progressText(progress, track), inline: true },
+    { name: '🎧 Pedido por', value: requester || '—', inline: true },
+    { name: '📋 Fila', value: `${Number.isFinite(queueLength) ? queueLength : 0} música(s)`, inline: true }
+  );
+
+  applyFooter(embed, `${Number.isFinite(queueLength) ? queueLength : 0} na fila`);
+
+  return embed;
+}
+
+function buildQueueEmbed({ snapshot = {}, guildName = null, client = null, previewLimit = 10 } = {}) {
+  const state = snapshot.state || 'idle';
+  const status = statusOf(state);
+  const current = snapshot.current || null;
+  const queue = Array.isArray(snapshot.queue) ? snapshot.queue : [];
+  const queueLength = Number.isFinite(snapshot.queueLength) ? snapshot.queueLength : queue.length;
+  const limit = Number.isFinite(previewLimit) && previewLimit > 0 ? Math.floor(previewLimit) : 10;
+
+  const preview = queue.slice(0, limit);
+  const remaining = queue.length - preview.length;
+
+  const lines = preview.map((item, index) => `${index + 1}. ${trackLink(item)}`);
+  if (lines.length === 0) lines.push('*Nada na fila.*');
+  if (remaining > 0) lines.push(`… e mais ${remaining} na fila.`);
+
+  const currentLines = [`${status.emoji} **${status.label}**`];
+
+  if (current) {
+    currentLines.push(trackLink(current));
+
+    const requester = requesterOf(current);
+    if (requester) currentLines.push(`Pedido por **${requester}**`);
+
+    currentLines.push(progressText(snapshot.progress, current));
+  }
+
+  const description = [...currentLines, '', `**📋 Próximas**`, ...lines].join('\n');
+
+  const embed = new EmbedBuilder()
+    .setColor(colorOf(state))
+    .setDescription(truncate(description, 4096));
+
+  applyAuthor(
+    embed,
+    guildName ? `${THEME.brand} • Fila — ${truncate(guildName, 200)}` : `${THEME.brand} • Fila`,
+    client
+  );
+
+  if (current && current.thumbnail) embed.setThumbnail(current.thumbnail);
+
+  applyFooter(embed, `${queueLength} na fila • mostrando ${preview.length}`);
+
+  return embed;
+}
+
+function buildQueuedEmbed({ track, position = 1, queueLength = 0, client = null } = {}) {
+  const embed = new EmbedBuilder().setColor(THEME.colors.music);
+
+  applyAuthor(embed, `${THEME.brand} • Adicionada à fila`, client);
+
+  embed.setTitle(truncate(track ? track.title : 'Adicionada à fila', THEME.embedTitleMax));
+  if (track && track.url) embed.setURL(track.url);
+  if (track && track.thumbnail) embed.setThumbnail(track.thumbnail);
+
+  embed.addFields(
+    { name: '📍 Posição', value: `#${Number.isFinite(position) ? position : 1}`, inline: true },
+    { name: '🎧 Pedido por', value: requesterOf(track) || '—', inline: true },
+    { name: '📋 Fila', value: `${Number.isFinite(queueLength) ? queueLength : 0} música(s)`, inline: true }
+  );
+
+  applyFooter(embed, 'use /nowplaying para ver o progresso');
+
+  return embed;
+}
+
+function pausedMessage(track) {
+  return `⏸️ **Música pausada.** ${trackLink(track)} — use \`/resume\` para continuar.`;
+}
+
+function resumedMessage(track) {
+  return `▶️ **Música retomada.** ${trackLink(track)}`;
+}
+
+function skippedMessage(current, next) {
+  const nextPart = next ? `Próxima: ${trackLink(next)}` : '*Fila vazia.*';
+  return `⏭️ Pulando ${trackLink(current)}. ${nextPart}`;
+}
+
+function stoppedMessage() {
+  return '⏹️ **Fila encerrada.** Desconectando do canal de voz.';
+}
+
+module.exports = {
+  THEME,
+  STATUS,
+  statusOf,
+  colorOf,
+  truncate,
+  progressBar,
+  percentOf,
+  trackLink,
+  progressText,
+  buildNowPlayingEmbed,
+  buildQueueEmbed,
+  buildQueuedEmbed,
+  pausedMessage,
+  resumedMessage,
+  skippedMessage,
+  stoppedMessage,
+};
