@@ -1,7 +1,7 @@
 const { createAudioResource, demuxProbe } = require('@discordjs/voice');
 const { createMusicError } = require('./errors');
 const { MUSIC_CONFIG } = require('./constants');
-const { openStream } = require('./source/ytdlp');
+const ytdlp = require('./source/ytdlp');
 
 function withTimeout(promise, timeoutMs) {
   let timer = null;
@@ -41,8 +41,8 @@ async function createResourceFromStream(readable, metadata = null) {
   return { resource, inputType: probe.type };
 }
 
-async function createTrackResource(track) {
-  const handle = await openStream(track.url);
+async function openTrackResource(track, infoFile) {
+  const handle = await ytdlp.openStream(track.url, { infoFile: infoFile || undefined });
 
   try {
     const { resource, inputType } = await withTimeout(
@@ -54,6 +54,24 @@ async function createTrackResource(track) {
   } catch (error) {
     handle.kill();
     throw error;
+  }
+}
+
+async function createTrackResource(track) {
+  const infoFile = track && track.infoFile ? track.infoFile : null;
+
+  if (!infoFile) return openTrackResource(track, null);
+
+  try {
+    const playback = await openTrackResource(track, infoFile);
+    await ytdlp.releaseTrackInfo(track);
+    return playback;
+  } catch (error) {
+    await ytdlp.releaseTrackInfo(track);
+
+    if (error && error.code === 'YT_DLP_NOT_FOUND') throw error;
+
+    return openTrackResource(track, null);
   }
 }
 

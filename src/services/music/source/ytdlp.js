@@ -1,9 +1,19 @@
-const { spawn } = require('node:child_process');
+const cp = require('node:child_process');
+const fs = require('node:fs');
+const fsp = fs.promises;
+const os = require('node:os');
+const path = require('node:path');
+const { randomUUID } = require('node:crypto');
 const { createMusicError } = require('../errors');
 const { MUSIC_CONFIG } = require('../constants');
 
 const STDERR_LIMIT = 1024 * 1024;
 const URL_PATTERN = /^https?:\/\//i;
+const INFO_DIR = path.join(os.tmpdir(), 'chicobot-info');
+const INFO_FILE_PREFIX = 'chicobot-info-';
+const INFO_FILE_STALE_MS = 60 * 1000;
+const UNLINK_RETRY_ATTEMPTS = 6;
+const UNLINK_RETRY_DELAY_MS = 50;
 
 function getYtDlpCommand() {
   const configured = process.env.YT_DLP_PATH;
@@ -15,6 +25,97 @@ function getYtDlpCommand() {
 
 function getEnv() {
   return { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' };
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function ensureInfoDir() {
+  try {
+    fs.mkdirSync(INFO_DIR, { recursive: true });
+    return INFO_DIR;
+  } catch (error) {
+    return null;
+  }
+}
+
+function createInfoFile(entry) {
+  const dir = ensureInfoDir();
+  if (!dir) return null;
+
+  const file = path.join(dir, `${INFO_FILE_PREFIX}${Date.now()}-${randomUUID()}.json`);
+
+  try {
+    fs.writeFileSync(file, JSON.stringify(entry));
+    return file;
+  } catch (error) {
+    return null;
+  }
+}
+
+async function unlinkInfoFile(file) {
+  for (let attempt = 0; attempt < UNLINK_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      await fsp.unlink(file);
+      return true;
+    } catch (error) {
+      const code = error && error.code;
+
+      if (code === 'ENOENT') return false;
+      if (code === 'EBUSY' || code === 'EPERM' || code === 'EACCES') {
+        await sleep(UNLINK_RETRY_DELAY_MS);
+        continue;
+      }
+
+      return false;
+    }
+  }
+
+  try {
+    await fsp.unlink(file);
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+async function releaseTrackInfo(track) {
+  if (!track || !track.infoFile) return false;
+
+  const file = track.infoFile;
+  track.infoFile = null;
+  await unlinkInfoFile(file);
+  return true;
+}
+
+function cleanupStaleInfoFiles(options = {}) {
+  const { olderThanMs = INFO_FILE_STALE_MS } = options;
+  let names;
+
+  try {
+    names = fs.readdirSync(INFO_DIR);
+  } catch (error) {
+    return 0;
+  }
+
+  const cutoff = Date.now() - olderThanMs;
+  let removed = 0;
+
+  for (const name of names) {
+    if (!name.startsWith(INFO_FILE_PREFIX)) continue;
+
+    const file = path.join(INFO_DIR, name);
+
+    try {
+      const stat = fs.statSync(file);
+      if (stat.mtimeMs >= cutoff) continue;
+      fs.rmSync(file, { force: true });
+      removed += 1;
+    } catch (error) {}
+  }
+
+  return removed;
 }
 
 function killChild(child) {
@@ -78,7 +179,7 @@ function createChild(args) {
   let child;
 
   try {
-    child = spawn(getYtDlpCommand(), args, {
+    child = cp.spawn(getYtDlpCommand(), args, {
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: getEnv(),
@@ -100,7 +201,7 @@ function buildMetadataArgs(target) {
   return args;
 }
 
-function buildStreamArgs(target) {
+function buildStreamArgs(target, options = {}) {
   const args = [
     '--ignore-config',
     '-f',
@@ -110,6 +211,8 @@ function buildStreamArgs(target) {
     '--no-warnings',
     '--no-part',
   ];
+
+  if (options.infoFile) args.push('--load-info-json', options.infoFile);
 
   if (URL_PATTERN.test(target)) args.push('--no-playlist');
 
@@ -209,7 +312,7 @@ function openStream(target, options = {}) {
     let child;
 
     try {
-      child = createChild(buildStreamArgs(target));
+      child = createChild(buildStreamArgs(target, { infoFile: options.infoFile }));
     } catch (error) {
       reject(error);
       return;
@@ -290,4 +393,10 @@ module.exports = {
   checkYtDlp,
   mapYtDlpError,
   summarizeStderr,
+  createInfoFile,
+  releaseTrackInfo,
+  cleanupStaleInfoFiles,
+  INFO_DIR,
 };
+
+cleanupStaleInfoFiles();

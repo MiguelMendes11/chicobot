@@ -12,6 +12,7 @@ const {
   assertSessionPlaying,
 } = require('./guards');
 const { createTrackResource } = require('./stream');
+const { releaseTrackInfo } = require('./source/ytdlp');
 const { computeBackoff, shouldReconnect } = require('./connectionLifecycle');
 const timing = require('./timing');
 const { MUSIC_CONFIG } = require('./constants');
@@ -346,7 +347,8 @@ class GuildMusicSession {
     let remaining = extraSkips;
 
     while (remaining > 0 && this.queue.length > 0) {
-      this.queue.shift();
+      const dropped = this.queue.shift();
+      await releaseTrackInfo(dropped);
       remaining -= 1;
     }
 
@@ -374,7 +376,7 @@ class GuildMusicSession {
       playback = await this.createResource(track, this);
     } catch (error) {
       timing.mark(this.guildId, 'resource.end');
-      this._handleTrackFailure(track, error);
+      await this._handleTrackFailure(track, error);
       return;
     }
 
@@ -391,7 +393,7 @@ class GuildMusicSession {
       this.player.play(playback.resource);
     } catch (error) {
       this._safeKill(playback);
-      this._handleTrackFailure(track, error);
+      await this._handleTrackFailure(track, error);
       return;
     }
 
@@ -402,13 +404,15 @@ class GuildMusicSession {
     this._emit('onTrackStart', this, track);
   }
 
-  _handleTrackFailure(track, error) {
+  async _handleTrackFailure(track, error) {
     this._playback = null;
     this.current = null;
     this.state = 'idle';
     this.lastError = error;
 
     timing.mark(this.guildId, 'play.error');
+
+    await releaseTrackInfo(track);
 
     if (this.destroyed) return;
 
@@ -494,6 +498,13 @@ class GuildMusicSession {
     this._reconnecting = false;
     this._clearEmptyChannelTimer();
     this._disarmAudioStartProbe();
+
+    await releaseTrackInfo(this.current);
+
+    for (const queued of this.queue) {
+      await releaseTrackInfo(queued);
+    }
+
     this.queue.length = 0;
 
     try {

@@ -45,14 +45,22 @@ module.exports = {
       const track = await source.resolveQuery(query, { requestedBy: interaction.user.tag });
       timing.mark(guildId, 'resolve.end');
 
-      await music.join({
-        guildId,
-        channelId: memberChannel.id,
-        adapterCreator: interaction.guild.voiceAdapterCreator,
-        textChannelId: interaction.channelId,
-      });
+      let result;
 
-      const result = await music.add(guildId, track);
+      try {
+        await music.join({
+          guildId,
+          channelId: memberChannel.id,
+          adapterCreator: interaction.guild.voiceAdapterCreator,
+          textChannelId: interaction.channelId,
+        });
+
+        result = await music.add(guildId, track);
+      } catch (error) {
+        await source.releaseTrackInfo(track);
+        throw error;
+      }
+
       const label = `${formatTrack(track)} · pedido por ${track.requestedBy}`;
 
       const content = result.started

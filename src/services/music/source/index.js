@@ -1,7 +1,7 @@
 const { createMusicError } = require('../errors');
 const { MUSIC_CONFIG } = require('../constants');
 const Track = require('../track');
-const { fetchMetadata } = require('./ytdlp');
+const ytdlp = require('./ytdlp');
 
 const URL_PATTERN = /^https?:\/\//i;
 const VIDEO_PATH_PATTERN = /^\/(shorts|embed|live|v)\/[^/]+/i;
@@ -115,12 +115,17 @@ function buildTrack(entry, requestedBy) {
 
 async function resolveQuery(query, options = {}) {
   const { target } = classifyQuery(query);
-  const payload = await fetchMetadata(target);
+  const payload = await ytdlp.fetchMetadata(target);
   const entry = pickEntry(payload);
 
   if (!entry) throw createMusicError('NO_RESULTS');
 
-  return buildTrack(entry, options.requestedBy || null);
+  const track = buildTrack(entry, options.requestedBy || null);
+  const infoFile = ytdlp.createInfoFile(entry);
+
+  if (infoFile) track.infoFile = infoFile;
+
+  return track;
 }
 
 module.exports = {
@@ -132,4 +137,5 @@ module.exports = {
   isPlaylistUrl,
   buildTrack,
   resolveQuery,
+  releaseTrackInfo: ytdlp.releaseTrackInfo,
 };
