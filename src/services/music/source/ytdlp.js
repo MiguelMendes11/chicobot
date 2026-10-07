@@ -385,12 +385,27 @@ async function checkYtDlp() {
   }
 }
 
+async function prewarmYtDlp() {
+  try {
+    const result = await checkYtDlp();
+
+    if (!result.ok) {
+      console.warn(`⚠️ Aquecimento do yt-dlp não concluiu (${result.command}).`);
+    }
+
+    return result;
+  } catch (error) {
+    return { ok: false, command: getYtDlpCommand(), error };
+  }
+}
+
 module.exports = {
   getYtDlpCommand,
   runYtDlp,
   fetchMetadata,
   openStream,
   checkYtDlp,
+  prewarmYtDlp,
   mapYtDlpError,
   summarizeStderr,
   createInfoFile,

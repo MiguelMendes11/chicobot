@@ -11,6 +11,30 @@ const {
 const { replyMusicError } = require('../utils/musicInteraction');
 const { buildNowPlayingEmbed, buildQueuedEmbed } = require('../utils/embeds');
 
+const SEARCHING_CONTENT = '🔍 Buscando música no YouTube…';
+
+function startResolve(query, requestedBy, guildId) {
+  return source.resolveQuery(query, { requestedBy }).then(
+    (track) => {
+      timing.mark(guildId, 'resolve.end');
+      return { ok: true, track };
+    },
+    (error) => {
+      timing.mark(guildId, 'resolve.end');
+      return { ok: false, error };
+    }
+  );
+}
+
+function releaseAbandonedTrack(outcomePromise) {
+  outcomePromise
+    .then((outcome) => {
+      if (outcome && outcome.ok) return source.releaseTrackInfo(outcome.track);
+      return null;
+    })
+    .catch(() => {});
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('play')
@@ -24,6 +48,8 @@ module.exports = {
     ),
   async execute(interaction) {
     let guildId = null;
+    let pendingResolve = null;
+    let resolveConsumed = false;
 
     try {
       guildId = assertInteractionInGuild(interaction);
@@ -40,16 +66,22 @@ module.exports = {
       source.classifyQuery(query);
 
       timing.mark(guildId, 'ack.begin');
+      timing.mark(guildId, 'resolve.begin');
+      pendingResolve = startResolve(query, interaction.user.tag, guildId);
+
       await interaction.deferReply();
       timing.mark(guildId, 'ack.end');
 
       timing.mark(guildId, 'status.begin');
-      await interaction.editReply({ content: '🔍 Buscando música no YouTube…' });
+      await interaction.editReply({ content: SEARCHING_CONTENT });
       timing.mark(guildId, 'status.end');
 
-      timing.mark(guildId, 'resolve.begin');
-      const track = await source.resolveQuery(query, { requestedBy: interaction.user.tag });
-      timing.mark(guildId, 'resolve.end');
+      const outcome = await pendingResolve;
+      resolveConsumed = true;
+
+      if (!outcome.ok) throw outcome.error;
+
+      const track = outcome.track;
 
       let result;
 
@@ -89,6 +121,7 @@ module.exports = {
       timing.mark(guildId, 'reply.end');
       timing.finish(guildId, { pending: result.started });
     } catch (error) {
+      if (pendingResolve && !resolveConsumed) releaseAbandonedTrack(pendingResolve);
       if (guildId) timing.finish(guildId);
       await replyMusicError(interaction, error);
     }
