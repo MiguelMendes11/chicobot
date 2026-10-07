@@ -88,6 +88,30 @@ function assertQueueCapacity(session) {
   return session;
 }
 
+function assertQueueNotEmpty(session) {
+  const queued = session && Array.isArray(session.queue) ? session.queue.length : 0;
+
+  if (queued === 0) throw createMusicError('NO_NEXT_TRACK');
+
+  return session;
+}
+
+function parseQueuePosition(value, queueLength, options = {}) {
+  const lowDetail = options.lowDetail || 'informe uma posição a partir de 1';
+  const position = Number(value);
+  const total = Number.isFinite(queueLength) ? queueLength : 0;
+
+  if (!Number.isInteger(position) || position < 1) {
+    throw createMusicError('INVALID_POSITION', { details: lowDetail });
+  }
+
+  if (position > total) {
+    throw createMusicError('INVALID_POSITION', { details: `a fila tem ${total} música(s)` });
+  }
+
+  return position;
+}
+
 module.exports = {
   assertInteractionInGuild,
   getMemberVoiceChannel,
@@ -98,4 +122,6 @@ module.exports = {
   assertSessionPaused,
   assertSessionPlaying,
   assertQueueCapacity,
+  assertQueueNotEmpty,
+  parseQueuePosition,
 };

@@ -175,6 +175,7 @@ function snapshot(guildId) {
       channelId: null,
       textChannelId: null,
       destroyed: false,
+      loopMode: 'off',
       progress: { positionSeconds: 0, durationSeconds: null, percent: null },
     };
   }

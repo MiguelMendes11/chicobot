@@ -7,9 +7,11 @@ const {
 const { createMusicError } = require('./errors');
 const {
   assertQueueCapacity,
+  assertQueueNotEmpty,
   assertSessionActive,
   assertSessionPaused,
   assertSessionPlaying,
+  parseQueuePosition,
 } = require('./guards');
 const { createTrackResource } = require('./stream');
 const { releaseTrackInfo } = require('./source/ytdlp');
@@ -53,6 +55,23 @@ function clampProgressSeconds(seconds, durationSeconds) {
   return seconds;
 }
 
+function normalizeLoopMode(mode) {
+  const value = typeof mode === 'string' ? mode.trim().toLowerCase() : '';
+
+  if (!MUSIC_CONFIG.LOOP_MODES.includes(value)) {
+    throw createMusicError('INVALID_LOOP_MODE', {
+      details: `esperado ${MUSIC_CONFIG.LOOP_MODES.join(', ')}`,
+    });
+  }
+
+  return value;
+}
+
+function pickRandom(random) {
+  if (typeof random === 'function') return random;
+  return Math.random;
+}
+
 class GuildMusicSession {
   constructor(guildId, options = {}) {
     if (!guildId || typeof guildId !== 'string') {
@@ -77,12 +96,17 @@ class GuildMusicSession {
     this.state = 'idle';
     this.destroyed = false;
     this.lastError = null;
+    this.loopMode = 'off';
+    this.random = pickRandom(options.random);
 
     this._playback = null;
     this._chain = Promise.resolve();
     this._advancePending = false;
     this._advanceCoversCurrent = false;
     this._pendingSkips = 0;
+    this._skipRequested = false;
+    this._playerErrorAt = null;
+    this._instantStreak = 0;
     this._tornDown = false;
 
     this._reconnectTimer = null;
@@ -101,6 +125,7 @@ class GuildMusicSession {
     this._onPlayerIdle = () => this._scheduleAdvance('player-idle');
     this._onPlayerError = (error) => {
       this.lastError = error;
+      this._playerErrorAt = Date.now();
       logError(`player errou na guild ${guildId}:`, error);
     };
 
@@ -142,6 +167,7 @@ class GuildMusicSession {
       channelId: this.channelId,
       textChannelId: this.textChannelId,
       destroyed: this.destroyed,
+      loopMode: this.loopMode,
       progress: this.getProgress(),
     };
   }
@@ -188,6 +214,95 @@ class GuildMusicSession {
     });
   }
 
+  setLoop(mode) {
+    return this._enqueue(() => {
+      const next = normalizeLoopMode(mode);
+      const previous = this.loopMode;
+
+      this.loopMode = next;
+      this._instantStreak = 0;
+
+      return { mode: next, previous, changed: next !== previous };
+    });
+  }
+
+  shuffle() {
+    return this._enqueue(() => {
+      assertQueueNotEmpty(this);
+
+      const total = this.queue.length;
+
+      for (let index = total - 1; index > 0; index -= 1) {
+        const raw = Math.floor(this.random() * (index + 1));
+        const swap = Math.max(0, Math.min(index, raw));
+
+        if (swap === index) continue;
+
+        const held = this.queue[index];
+        this.queue[index] = this.queue[swap];
+        this.queue[swap] = held;
+      }
+
+      this._emit('onQueueChange', this);
+
+      return { shuffled: total, queueLength: total };
+    });
+  }
+
+  removeAt(position) {
+    return this._enqueue(async () => {
+      assertQueueNotEmpty(this);
+
+      const index =
+        parseQueuePosition(position, this.queue.length, {
+          lowDetail: 'a música atual não pode ser removida; use /skip',
+        }) - 1;
+
+      const [removed] = this.queue.splice(index, 1);
+
+      if (removed) await releaseTrackInfo(removed);
+
+      this._emit('onQueueChange', this);
+
+      return { track: removed || null, position: index + 1, queueLength: this.queue.length };
+    });
+  }
+
+  clearUpcoming() {
+    return this._enqueue(async () => {
+      assertQueueNotEmpty(this);
+
+      const removed = this.queue.splice(0, this.queue.length);
+
+      for (const track of removed) {
+        await releaseTrackInfo(track);
+      }
+
+      this._emit('onQueueChange', this);
+
+      return { removed: removed.length, queueLength: this.queue.length };
+    });
+  }
+
+  moveTrack(from, to) {
+    return this._enqueue(() => {
+      assertQueueNotEmpty(this);
+
+      const total = this.queue.length;
+      const options = { lowDetail: 'informe posições a partir de 1' };
+
+      const fromIndex = parseQueuePosition(from, total, options) - 1;
+      const toIndex = parseQueuePosition(to, total, options) - 1;
+
+      const [moved] = this.queue.splice(fromIndex, 1);
+      this.queue.splice(toIndex, 0, moved);
+
+      this._emit('onQueueChange', this);
+
+      return { track: moved, from: fromIndex + 1, to: toIndex + 1, queueLength: total };
+    });
+  }
+
   pause() {
     return this._enqueue(() => {
       assertSessionPlaying(this);
@@ -215,6 +330,8 @@ class GuildMusicSession {
       assertSessionActive(this);
 
       if (this.player.state.status === IDLE_STATUS) {
+        this._skipRequested = true;
+
         if (this._advanceCoversCurrent) {
           this._pendingSkips += 1;
         } else {
@@ -225,6 +342,7 @@ class GuildMusicSession {
         return { skipped: true, deferred: true };
       }
 
+      this._skipRequested = true;
       this._advanceCoversCurrent = true;
       this.player.stop(true);
 
@@ -353,6 +471,12 @@ class GuildMusicSession {
   }
 
   async _advance(reason) {
+    const skipIntent = this._skipRequested || this._pendingSkips > 0 || reason === 'skip-idle';
+    const playerFailed = Boolean(this._playerErrorAt);
+
+    this._skipRequested = false;
+    this._playerErrorAt = null;
+
     if (this.destroyed) return;
 
     const idleDerived = reason === 'player-idle' || reason === 'skip-idle';
@@ -366,9 +490,33 @@ class GuildMusicSession {
 
     this._pendingSkips = 0;
     this._advanceCoversCurrent = false;
-    this._releasePlayback();
+    const finishedPlayback = this._releasePlayback();
 
     if (finished) this._emit('onTrackEnd', this, finished, reason);
+
+    const naturalEnd = reason === 'player-idle' && !skipIntent && !playerFailed;
+
+    let allowLoop = false;
+
+    if (naturalEnd && this.loopMode !== 'off' && finished) {
+      allowLoop = this._registerLoopEnd(finishedPlayback);
+
+      if (!allowLoop) {
+        logWarn(
+          `loop ${this.loopMode} abortado na guild ${this.guildId}: término instantâneo repetido; seguindo com a fila.`
+        );
+      }
+    }
+
+    if (allowLoop && this.loopMode === 'track') {
+      await this._startTrack(finished);
+      return;
+    }
+
+    if (allowLoop && this.loopMode === 'queue') {
+      this.queue.push(finished);
+      this._emit('onQueueChange', this);
+    }
 
     let remaining = extraSkips;
 
@@ -388,6 +536,18 @@ class GuildMusicSession {
     }
 
     await this._startTrack(next);
+  }
+
+  _registerLoopEnd(playback) {
+    const playedMs = playback && playback.resource ? Number(playback.resource.playbackDuration) : NaN;
+
+    if (Number.isFinite(playedMs) && playedMs < MUSIC_CONFIG.LOOP_MIN_PLAYBACK_MS) {
+      this._instantStreak += 1;
+    } else {
+      this._instantStreak = 0;
+    }
+
+    return this._instantStreak < MUSIC_CONFIG.LOOP_MAX_INSTANT_ENDS;
   }
 
   async _startTrack(track) {
@@ -426,6 +586,7 @@ class GuildMusicSession {
     this._playback = playback;
     this.current = track;
     this.state = 'playing';
+    this._playerErrorAt = null;
     this._armAudioStartProbe();
     this._emit('onTrackStart', this, track);
   }

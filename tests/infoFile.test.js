@@ -41,6 +41,19 @@ function makeInfoFile(entry = sampleEntry()) {
   return file;
 }
 
+const REMOVE_POLL_TIMEOUT_MS = 500;
+const REMOVE_POLL_INTERVAL_MS = 10;
+
+async function waitForFileRemoval(file) {
+  const deadline = Date.now() + REMOVE_POLL_TIMEOUT_MS;
+
+  while (fs.existsSync(file) && Date.now() < deadline) {
+    await new Promise((resolve) => {
+      setTimeout(resolve, REMOVE_POLL_INTERVAL_MS);
+    });
+  }
+}
+
 function makeFakeChild() {
   const child = new EventEmitter();
   child.stdout = new PassThrough();
@@ -514,6 +527,7 @@ describe('infoFile — sessão descarta faixas sem órfãos', () => {
     await settle();
 
     expect(track.infoFile).toBeNull();
+    await waitForFileRemoval(file);
     expect(fs.existsSync(file)).toBe(false);
     expect(session.state).toBe('idle');
     expect(session.current).toBeNull();

@@ -21,6 +21,8 @@ const MUSIC_ERROR_MESSAGES = Object.freeze({
   NOT_PAUSED: 'Nenhuma música está pausada.',
   NO_CURRENT_TRACK: 'Não há nenhuma música tocando no momento.',
   NO_NEXT_TRACK: 'A fila está vazia; não existe próxima música.',
+  INVALID_LOOP_MODE: 'Modo de loop inválido.',
+  INVALID_POSITION: 'Posição inválida na fila.',
   QUEUE_FULL: 'A fila deste servidor atingiu o limite máximo.',
   EMPTY_QUERY: 'Informe uma busca ou um link do YouTube.',
   UNSUPPORTED_URL: 'Esta fase aceita apenas links do YouTube.',

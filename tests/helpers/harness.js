@@ -43,6 +43,7 @@ function createHarness(options = {}) {
         targetChannelId: options.targetChannelId || 'vc1',
         textChannelId: options.textChannelId || null,
         hooks: options.hooks,
+        random: options.random,
       })
   );
 

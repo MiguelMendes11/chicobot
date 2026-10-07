@@ -20,6 +20,7 @@ module.exports = {
         progress: snapshot.progress,
         queueLength: snapshot.queueLength,
         client: interaction.client,
+        loopMode: snapshot.loopMode,
       });
 
       await interaction.reply({ embeds: [embed] });

@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
   THEME,
+  LOOP_LABELS,
   truncate,
   progressBar,
   trackLink,
+  loopSuffix,
   buildNowPlayingEmbed,
   buildQueueEmbed,
   buildQueuedEmbed,
@@ -11,6 +13,11 @@ import {
   resumedMessage,
   skippedMessage,
   stoppedMessage,
+  loopModeMessage,
+  shuffledMessage,
+  removedMessage,
+  clearedMessage,
+  movedMessage,
 } from '../src/utils/embeds.js';
 
 describe('truncate', () => {
@@ -297,5 +304,101 @@ describe('mensagens efêmeras padrão', () => {
 
   it('/stop usa o formato padrão', () => {
     expect(stoppedMessage()).toBe('⏹️ **Fila encerrada.** Desconectando do canal de voz.');
+  });
+});
+
+describe('Stage 9 — sufixo de loop nos embeds', () => {
+  const currentTrack = {
+    id: 'now',
+    title: 'Tocando agora',
+    url: 'https://www.youtube.com/watch?v=now',
+    duration: 200,
+    thumbnail: 'https://i.ytimg.com/vi/now/hqdefault.jpg',
+  };
+
+  const upcoming = [
+    {
+      id: 'q1',
+      title: 'Próxima 1',
+      url: 'https://www.youtube.com/watch?v=q1',
+      duration: 100,
+      requestedBy: 'outro#0002',
+    },
+  ];
+
+  it('loopSuffix só aparece quando o modo é diferente de off', () => {
+    expect(loopSuffix('off')).toBe('');
+    expect(loopSuffix(undefined)).toBe('');
+    expect(loopSuffix('banana')).toBe('');
+    expect(loopSuffix('track')).toBe(' • loop: música');
+    expect(loopSuffix('queue')).toBe(' • loop: fila');
+  });
+
+  it('LOOP_LABELS cobre track e queue', () => {
+    expect(LOOP_LABELS).toEqual({ track: 'música', queue: 'fila' });
+  });
+
+  it('/queue anexa o loop no rodapé apenas quando ativo', () => {
+    const base = {
+      state: 'playing',
+      current: currentTrack,
+      queue: upcoming,
+      queueLength: 1,
+      progress: { positionSeconds: 20, durationSeconds: 200, percent: 10 },
+    };
+
+    const withLoop = buildQueueEmbed({ snapshot: { ...base, loopMode: 'queue' } }).toJSON();
+    const withoutLoop = buildQueueEmbed({ snapshot: base }).toJSON();
+
+    expect(withLoop.footer.text).toBe('ChicoBot • 1 na fila • mostrando 1 • loop: fila');
+    expect(withoutLoop.footer.text).toBe('ChicoBot • 1 na fila • mostrando 1');
+    expect(withLoop.color).toBe(THEME.colors.music);
+  });
+
+  it('/nowplaying anexa o loop no rodapé apenas quando ativo', () => {
+    const withLoop = buildNowPlayingEmbed({ track: currentTrack, queueLength: 2, loopMode: 'track' }).toJSON();
+    const withoutLoop = buildNowPlayingEmbed({ track: currentTrack, queueLength: 2 }).toJSON();
+
+    expect(withLoop.footer.text).toBe('ChicoBot • 2 na fila • loop: música');
+    expect(withoutLoop.footer.text).toBe('ChicoBot • 2 na fila');
+    expect(withLoop.color).toBe(THEME.colors.music);
+  });
+});
+
+describe('Stage 9 — mensagens efêmeras novas', () => {
+  const track = { title: 'Faixa', url: 'https://youtu.be/x', duration: 180 };
+
+  it('/loop informa o modo com uma explicação curta', () => {
+    expect(loopModeMessage('off')).toBe('🔁 **Loop desligado.** A fila avança normalmente.');
+    expect(loopModeMessage('track')).toBe(
+      '🔁 **Loop: música.** A faixa atual repetirá até você usar /skip ou desligar o loop.'
+    );
+    expect(loopModeMessage('queue')).toBe(
+      '🔁 **Loop: fila.** Ao terminar, cada música volta para o final da fila.'
+    );
+    expect(loopModeMessage('desconhecido')).toBe(loopModeMessage('off'));
+  });
+
+  it('/shuffle informa quantas músicas foram embaralhadas', () => {
+    expect(shuffledMessage(4)).toBe(
+      '🔀 **Fila embaralhada.** 4 música(s) reordenadas (a música atual não mudou).'
+    );
+    expect(shuffledMessage(undefined)).toContain('0 música(s)');
+  });
+
+  it('/remove informa a faixa, a posição e o restante', () => {
+    expect(removedMessage(track, 2, 1)).toBe(
+      '🗑️ Removida **[Faixa](https://youtu.be/x)** (3:00) da posição 2. Restam 1 na fila.'
+    );
+  });
+
+  it('/clear informa a quantidade removida', () => {
+    expect(clearedMessage(3)).toBe('🧹 **Fila limpa.** 3 música(s) removida(s); a música atual continua tocando.');
+  });
+
+  it('/move informa origem e destino', () => {
+    expect(movedMessage(track, 4, 1)).toBe(
+      '↕️ **[Faixa](https://youtu.be/x)** (3:00) movida da posição 4 para 1.'
+    );
   });
 });

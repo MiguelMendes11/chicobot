@@ -17,6 +17,11 @@ const STATUS = Object.freeze({
   idle: Object.freeze({ label: 'Nada tocando', emoji: '⏹️' }),
 });
 
+const LOOP_LABELS = Object.freeze({
+  track: 'música',
+  queue: 'fila',
+});
+
 function statusOf(state) {
   return STATUS[state] || STATUS.playing;
 }
@@ -115,7 +120,25 @@ function requesterOf(track) {
   return track && track.requestedBy ? truncate(track.requestedBy, 256) : null;
 }
 
-function buildNowPlayingEmbed({ track, state = 'playing', progress = null, queueLength = 0, client = null } = {}) {
+function loopSuffix(loopMode) {
+  const label = LOOP_LABELS[loopMode];
+  return label ? ` • loop: ${label}` : '';
+}
+
+const LOOP_MESSAGES = Object.freeze({
+  off: '🔁 **Loop desligado.** A fila avança normalmente.',
+  track: '🔁 **Loop: música.** A faixa atual repetirá até você usar /skip ou desligar o loop.',
+  queue: '🔁 **Loop: fila.** Ao terminar, cada música volta para o final da fila.',
+});
+
+function buildNowPlayingEmbed({
+  track,
+  state = 'playing',
+  progress = null,
+  queueLength = 0,
+  client = null,
+  loopMode = 'off',
+} = {}) {
   const status = statusOf(state);
   const embed = new EmbedBuilder().setColor(colorOf(state));
 
@@ -133,7 +156,7 @@ function buildNowPlayingEmbed({ track, state = 'playing', progress = null, queue
     { name: '📋 Fila', value: `${Number.isFinite(queueLength) ? queueLength : 0} música(s)`, inline: true }
   );
 
-  applyFooter(embed, `${Number.isFinite(queueLength) ? queueLength : 0} na fila`);
+  applyFooter(embed, `${Number.isFinite(queueLength) ? queueLength : 0} na fila${loopSuffix(loopMode)}`);
 
   return embed;
 }
@@ -178,7 +201,7 @@ function buildQueueEmbed({ snapshot = {}, guildName = null, client = null, previ
 
   if (current && current.thumbnail) embed.setThumbnail(current.thumbnail);
 
-  applyFooter(embed, `${queueLength} na fila • mostrando ${preview.length}`);
+  applyFooter(embed, `${queueLength} na fila • mostrando ${preview.length}${loopSuffix(snapshot.loopMode)}`);
 
   return embed;
 }
@@ -220,9 +243,33 @@ function stoppedMessage() {
   return '⏹️ **Fila encerrada.** Desconectando do canal de voz.';
 }
 
+function loopModeMessage(mode) {
+  return LOOP_MESSAGES[mode] || LOOP_MESSAGES.off;
+}
+
+function shuffledMessage(count) {
+  const total = Number.isFinite(count) ? count : 0;
+  return `🔀 **Fila embaralhada.** ${total} música(s) reordenadas (a música atual não mudou).`;
+}
+
+function removedMessage(track, position, queueLength) {
+  const remaining = Number.isFinite(queueLength) ? queueLength : 0;
+  return `🗑️ Removida ${trackLink(track)} da posição ${position}. Restam ${remaining} na fila.`;
+}
+
+function clearedMessage(count) {
+  const total = Number.isFinite(count) ? count : 0;
+  return `🧹 **Fila limpa.** ${total} música(s) removida(s); a música atual continua tocando.`;
+}
+
+function movedMessage(track, from, to) {
+  return `↕️ ${trackLink(track)} movida da posição ${from} para ${to}.`;
+}
+
 module.exports = {
   THEME,
   STATUS,
+  LOOP_LABELS,
   statusOf,
   colorOf,
   truncate,
@@ -230,6 +277,7 @@ module.exports = {
   percentOf,
   trackLink,
   progressText,
+  loopSuffix,
   buildNowPlayingEmbed,
   buildQueueEmbed,
   buildQueuedEmbed,
@@ -237,4 +285,9 @@ module.exports = {
   resumedMessage,
   skippedMessage,
   stoppedMessage,
+  loopModeMessage,
+  shuffledMessage,
+  removedMessage,
+  clearedMessage,
+  movedMessage,
 };
