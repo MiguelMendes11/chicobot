@@ -14,6 +14,8 @@ const MUSIC_CONFIG = Object.freeze({
   RECONNECT_BACKOFF_MS: Object.freeze([1000, 3000, 5000]),
   EMPTY_CHANNEL_GRACE_MS: 60000,
   METADATA_MAX_BYTES: 16 * 1024 * 1024,
+  RESOLVE_CACHE_TTL_MS: 5 * 60 * 1000,
+  RESOLVE_CACHE_MAX_ENTRIES: 50,
   SEARCH_PREFIX: 'ytsearch1:',
   YT_DLP_AUDIO_FORMAT: 'bestaudio[ext=webm][acodec=opus]/bestaudio',
   YOUTUBE_HOSTS: Object.freeze([

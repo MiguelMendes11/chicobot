@@ -5,6 +5,7 @@ const FINALIZE_CAP_MS = 30000;
 const PHASES = Object.freeze([
   { label: 'ack', from: 'ack.begin', to: 'ack.end' },
   { label: 'status', from: 'status.begin', to: 'status.end' },
+  { label: 'cache', tags: { 'cache.hit': 'hit', 'cache.inflight': 'inflight', 'cache.miss': 'miss' } },
   { label: 'resolve', from: 'resolve.begin', to: 'resolve.end' },
   { label: 'join', from: 'join.begin', to: 'join.end' },
   { label: 'ready', from: 'ready.begin', to: 'ready.end' },
@@ -66,6 +67,18 @@ function formatDelta(marks, from, to) {
   return `${Math.max(0, end - start)}ms`;
 }
 
+function formatPhase(marks, phase) {
+  if (phase.tags) {
+    for (const [mark, value] of Object.entries(phase.tags)) {
+      if (marks.has(mark)) return value;
+    }
+
+    return 'n/a';
+  }
+
+  return formatDelta(marks, phase.from, phase.to);
+}
+
 function emit(guildId, ctx) {
   contexts.delete(guildId);
   if (ctx.capTimer) {
@@ -75,7 +88,7 @@ function emit(guildId, ctx) {
 
   if (!isEnabled()) return;
 
-  const parts = PHASES.map((phase) => `${phase.label}=${formatDelta(ctx.marks, phase.from, phase.to)}`);
+  const parts = PHASES.map((phase) => `${phase.label}=${formatPhase(ctx.marks, phase)}`);
   console.log(`⏱ [timing] guild=${guildId} ${parts.join(' ')}`);
 }
 

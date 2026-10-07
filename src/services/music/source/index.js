@@ -1,11 +1,14 @@
 const { createMusicError } = require('../errors');
 const { MUSIC_CONFIG } = require('../constants');
 const Track = require('../track');
+const timing = require('../timing');
 const ytdlp = require('./ytdlp');
+const { metadataCache } = require('./cache');
 
 const URL_PATTERN = /^https?:\/\//i;
 const VIDEO_PATH_PATTERN = /^\/(shorts|embed|live|v)\/[^/]+/i;
 const CHANNEL_PATH_PATTERN = /^\/(@|channel\/|c\/|user\/)/i;
+const VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 const PLAYLIST_PATHS = ['/playlist', '/videos', '/streams'];
 
 function isUrl(query) {
@@ -70,6 +73,44 @@ function classifyQuery(query) {
   return { kind: 'search', target: `${MUSIC_CONFIG.SEARCH_PREFIX}${trimmed}` };
 }
 
+function normalizeSearchKey(target) {
+  return String(target)
+    .normalize('NFKC')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractVideoId(parsed) {
+  const hostname = parsed.hostname.toLowerCase();
+
+  if (hostname === 'youtu.be' || hostname.endsWith('.youtu.be')) {
+    const candidate = parsed.pathname.split('/').filter(Boolean)[0];
+    return candidate && VIDEO_ID_PATTERN.test(candidate) ? candidate : null;
+  }
+
+  const fromQuery = parsed.searchParams.get('v');
+  if (fromQuery && VIDEO_ID_PATTERN.test(fromQuery)) return fromQuery;
+
+  const match = parsed.pathname.match(VIDEO_PATH_PATTERN);
+  const candidate = match ? match[0].split('/')[2] : null;
+
+  return candidate && VIDEO_ID_PATTERN.test(candidate) ? candidate : null;
+}
+
+function buildCacheKey(kind, target) {
+  if (kind === 'search') return `s:${normalizeSearchKey(target)}`;
+  if (kind !== 'url') return null;
+
+  try {
+    const id = extractVideoId(parseUrl(target));
+    return id ? `v:${id}` : null;
+  } catch (error) {
+    return null;
+  }
+}
+
 function pickEntry(payload) {
   if (!payload || typeof payload !== 'object') return null;
 
@@ -125,19 +166,72 @@ function buildTrack(entry, requestedBy) {
   });
 }
 
-async function resolveQuery(query, options = {}) {
-  const { target } = classifyQuery(query);
-  const payload = await ytdlp.fetchMetadata(target);
+function pickEntryOrThrow(payload) {
   const entry = pickEntry(payload);
 
   if (!entry) throw createMusicError('NO_RESULTS');
 
-  const track = buildTrack(entry, options.requestedBy || null);
+  return entry;
+}
+
+async function fetchEntry(target) {
+  const payload = await ytdlp.fetchMetadata(target);
+  return pickEntryOrThrow(payload);
+}
+
+async function fetchEntryShared(key, target) {
+  const pending = ytdlp.fetchMetadata(target).then(pickEntryOrThrow);
+
+  metadataCache.setInflight(key, pending);
+
+  try {
+    return await pending;
+  } finally {
+    metadataCache.deleteInflight(key);
+  }
+}
+
+function createTrackFromEntry(entry, requestedBy, key) {
+  const track = buildTrack(entry, requestedBy || null);
+
+  if (key) metadataCache.set(key, entry);
+
   const infoFile = ytdlp.createInfoFile(entry);
 
   if (infoFile) track.infoFile = infoFile;
 
   return track;
+}
+
+async function resolveQuery(query, options = {}) {
+  const { kind, target } = classifyQuery(query);
+  const key = buildCacheKey(kind, target);
+  const guildId = options.guildId || null;
+
+  if (key) {
+    const cached = metadataCache.get(key);
+
+    if (cached) {
+      timing.mark(guildId, 'cache.hit');
+      return createTrackFromEntry(cached, options.requestedBy, key);
+    }
+  }
+
+  const shared = key ? metadataCache.getInflight(key) : undefined;
+
+  if (key) timing.mark(guildId, shared ? 'cache.inflight' : 'cache.miss');
+
+  let entry;
+
+  if (shared) {
+    entry = await shared;
+  } else if (key) {
+    entry = await fetchEntryShared(key, target);
+  } else {
+    entry = await fetchEntry(target);
+  }
+
+  return createTrackFromEntry(entry, options.requestedBy, key);
 }
 
 module.exports = {
@@ -148,6 +242,8 @@ module.exports = {
   isChannelUrl,
   isPlaylistUrl,
   buildTrack,
+  buildCacheKey,
+  normalizeSearchKey,
   resolveQuery,
   releaseTrackInfo: ytdlp.releaseTrackInfo,
 };

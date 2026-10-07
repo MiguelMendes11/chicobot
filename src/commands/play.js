@@ -14,7 +14,7 @@ const { buildNowPlayingEmbed, buildQueuedEmbed } = require('../utils/embeds');
 const SEARCHING_CONTENT = '🔍 Buscando música no YouTube…';
 
 function startResolve(query, requestedBy, guildId) {
-  return source.resolveQuery(query, { requestedBy }).then(
+  return source.resolveQuery(query, { requestedBy, guildId }).then(
     (track) => {
       timing.mark(guildId, 'resolve.end');
       return { ok: true, track };

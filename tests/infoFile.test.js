@@ -12,6 +12,7 @@ import { createTrackStub, settle } from './helpers/fakes.js';
 const nodeRequire = createRequire(fileURLToPath(import.meta.url));
 
 const source = nodeRequire('../src/services/music/source/index.js');
+const { metadataCache } = nodeRequire('../src/services/music/source/cache.js');
 const ytdlp = nodeRequire('../src/services/music/source/ytdlp.js');
 const streamService = nodeRequire('../src/services/music/stream.js');
 const timing = nodeRequire('../src/services/music/timing.js');
@@ -112,12 +113,14 @@ function createInteraction() {
 
 describe('infoFile — resolveQuery', () => {
   beforeEach(() => {
+    metadataCache.clear();
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
   afterEach(() => {
+    metadataCache.clear();
     vi.restoreAllMocks();
     for (const file of createdFiles.splice(0)) {
       try {
