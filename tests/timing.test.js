@@ -150,4 +150,84 @@ describe('timing (MUSIC_DEBUG_TIMING)', () => {
 
     expect(timingLines()).toEqual([]);
   });
+
+  it('emite as fases do comando (ack, status, add, reply) e total→audio', () => {
+    vi.stubEnv('MUSIC_DEBUG_TIMING', 'true');
+
+    timing.begin('g1');
+    vi.advanceTimersByTime(120);
+    timing.mark('g1', 'ack.begin');
+    vi.advanceTimersByTime(180);
+    timing.mark('g1', 'ack.end');
+    vi.advanceTimersByTime(250);
+    timing.mark('g1', 'status.begin');
+    vi.advanceTimersByTime(300);
+    timing.mark('g1', 'status.end');
+    vi.advanceTimersByTime(400);
+    timing.mark('g1', 'add.begin');
+    vi.advanceTimersByTime(50);
+    timing.mark('g1', 'add.end');
+    vi.advanceTimersByTime(900);
+    timing.mark('g1', 'play.call');
+    vi.advanceTimersByTime(700);
+    timing.mark('g1', 'play.audio');
+    vi.advanceTimersByTime(200);
+    timing.mark('g1', 'reply.begin');
+    vi.advanceTimersByTime(350);
+    timing.mark('g1', 'reply.end');
+    timing.finish('g1');
+
+    const emitted = timingLines();
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]).toContain('ack=180ms');
+    expect(emitted[0]).toContain('status=300ms');
+    expect(emitted[0]).toContain('add=50ms');
+    expect(emitted[0]).toContain('play→audio=700ms');
+    expect(emitted[0]).toContain('reply=350ms');
+    expect(emitted[0]).toContain('total=3450ms');
+    expect(emitted[0]).toContain('total→audio=2900ms');
+  });
+
+  it('reporta o fallback de resource como fase própria', () => {
+    vi.stubEnv('MUSIC_DEBUG_TIMING', 'true');
+
+    timing.begin('g1');
+    timing.mark('g1', 'resource.begin');
+    vi.advanceTimersByTime(400);
+    timing.mark('g1', 'resource.fallback');
+    vi.advanceTimersByTime(850);
+    timing.mark('g1', 'resource.end');
+    timing.finish('g1');
+
+    const emitted = timingLines();
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]).toContain('resource=1250ms');
+    expect(emitted[0]).toContain('fallback=850ms');
+  });
+
+  it('mantém fallback=n/a quando o retry não acontece', () => {
+    vi.stubEnv('MUSIC_DEBUG_TIMING', 'true');
+
+    timing.begin('g1');
+    timing.mark('g1', 'resource.begin');
+    vi.advanceTimersByTime(900);
+    timing.mark('g1', 'resource.end');
+    timing.finish('g1');
+
+    const emitted = timingLines();
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]).toContain('resource=900ms');
+    expect(emitted[0]).toContain('fallback=n/a');
+  });
+
+  it('mantém total→audio=n/a quando o áudio nunca inicia', () => {
+    vi.stubEnv('MUSIC_DEBUG_TIMING', 'true');
+
+    timing.begin('g1');
+    timing.finish('g1');
+
+    const emitted = timingLines();
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]).toContain('total→audio=n/a');
+  });
 });

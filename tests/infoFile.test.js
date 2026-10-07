@@ -14,6 +14,7 @@ const nodeRequire = createRequire(fileURLToPath(import.meta.url));
 const source = nodeRequire('../src/services/music/source/index.js');
 const ytdlp = nodeRequire('../src/services/music/source/ytdlp.js');
 const streamService = nodeRequire('../src/services/music/stream.js');
+const timing = nodeRequire('../src/services/music/timing.js');
 const music = nodeRequire('../src/services/music/index.js');
 const play = nodeRequire('../src/commands/play.js');
 const { createMusicError } = nodeRequire('../src/services/music/errors.js');
@@ -358,6 +359,7 @@ describe('infoFile — createTrackResource e fallback único', () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
     for (const file of createdFiles.splice(0)) {
       try {
@@ -403,6 +405,40 @@ describe('infoFile — createTrackResource e fallback único', () => {
     expect(track.infoFile).toBeNull();
     expect(fs.existsSync(file)).toBe(false);
     expect(playback.resource).toBeTruthy();
+
+    goodHandle.kill();
+    if (playback.resource.playStream && typeof playback.resource.playStream.destroy === 'function') {
+      playback.resource.playStream.destroy();
+    }
+  });
+
+  it('marca resource.fallback no timing quando o retry sem infoFile é usado', async () => {
+    vi.stubEnv('MUSIC_DEBUG_TIMING', 'true');
+
+    const file = makeInfoFile();
+    const track = createTrackStub({ infoFile: file });
+    const goodHandle = makeHandle();
+    vi.spyOn(ytdlp, 'openStream')
+      .mockRejectedValueOnce(createMusicError('STREAM_UNAVAILABLE'))
+      .mockResolvedValueOnce(goodHandle);
+
+    const logSpy = console.log;
+
+    timing.begin('g1');
+    timing.mark('g1', 'resource.begin');
+    const playback = await streamService.createTrackResource(track, { guildId: 'g1' });
+    timing.mark('g1', 'resource.end');
+    timing.finish('g1');
+
+    const line = logSpy.mock.calls
+      .map((args) => String(args[0]))
+      .find((entry) => entry.includes('[timing]'));
+
+    expect(line).toBeTruthy();
+    expect(line).toContain('guild=g1');
+    expect(line).toMatch(/resource=\d+ms/);
+    expect(line).toMatch(/fallback=\d+ms/);
+    expect(line).not.toContain('fallback=n/a');
 
     goodHandle.kill();
     if (playback.resource.playStream && typeof playback.resource.playStream.destroy === 'function') {

@@ -51,7 +51,7 @@ function createFakeConnection({ status = 'signalling', channelId = 'vc1', guildI
   return connection;
 }
 
-function createFakePlayer({ status = 'idle' } = {}) {
+function createFakePlayer({ status = 'idle', playStatus = 'buffering' } = {}) {
   const emitter = new EventEmitter();
 
   const player = {
@@ -77,9 +77,9 @@ function createFakePlayer({ status = 'idle' } = {}) {
     play(resource) {
       player.playCalls.push(resource);
       const previous = player.state;
-      player.state = { status: 'buffering', playbackDuration: 0 };
+      player.state = { status: playStatus, playbackDuration: 0 };
       emitter.emit('stateChange', previous, player.state);
-      emitter.emit('buffering');
+      emitter.emit(playStatus);
       return player;
     },
     stop() {

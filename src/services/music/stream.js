@@ -2,6 +2,7 @@ const { createAudioResource, demuxProbe } = require('@discordjs/voice');
 const { createMusicError } = require('./errors');
 const { MUSIC_CONFIG } = require('./constants');
 const ytdlp = require('./source/ytdlp');
+const timing = require('./timing');
 
 function withTimeout(promise, timeoutMs) {
   let timer = null;
@@ -57,7 +58,7 @@ async function openTrackResource(track, infoFile) {
   }
 }
 
-async function createTrackResource(track) {
+async function createTrackResource(track, session = null) {
   const infoFile = track && track.infoFile ? track.infoFile : null;
 
   if (!infoFile) return openTrackResource(track, null);
@@ -70,6 +71,8 @@ async function createTrackResource(track) {
     await ytdlp.releaseTrackInfo(track);
 
     if (error && error.code === 'YT_DLP_NOT_FOUND') throw error;
+
+    if (session && session.guildId) timing.mark(session.guildId, 'resource.fallback');
 
     return openTrackResource(track, null);
   }

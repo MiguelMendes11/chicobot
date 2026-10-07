@@ -3,12 +3,18 @@ const TTL_MS = 10 * 60 * 1000;
 const FINALIZE_CAP_MS = 30000;
 
 const PHASES = Object.freeze([
+  { label: 'ack', from: 'ack.begin', to: 'ack.end' },
+  { label: 'status', from: 'status.begin', to: 'status.end' },
   { label: 'resolve', from: 'resolve.begin', to: 'resolve.end' },
   { label: 'join', from: 'join.begin', to: 'join.end' },
   { label: 'ready', from: 'ready.begin', to: 'ready.end' },
+  { label: 'add', from: 'add.begin', to: 'add.end' },
   { label: 'resource', from: 'resource.begin', to: 'resource.end' },
+  { label: 'fallback', from: 'resource.fallback', to: 'resource.end' },
   { label: 'play→audio', from: 'play.call', to: 'play.audio' },
+  { label: 'reply', from: 'reply.begin', to: 'reply.end' },
   { label: 'total', from: 'total.begin', to: 'total.end' },
+  { label: 'total→audio', from: 'total.begin', to: 'play.audio' },
 ]);
 
 const contexts = new Map();

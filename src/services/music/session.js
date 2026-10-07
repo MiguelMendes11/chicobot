@@ -574,20 +574,23 @@ class GuildMusicSession {
     }
 
     timing.mark(this.guildId, 'play.call');
+    this._armAudioStartProbe();
 
     try {
       this.player.play(playback.resource);
     } catch (error) {
+      this._disarmAudioStartProbe();
       this._safeKill(playback);
       await this._handleTrackFailure(track, error);
       return;
     }
 
+    this._syncAudioStartProbe();
+
     this._playback = playback;
     this.current = track;
     this.state = 'playing';
     this._playerErrorAt = null;
-    this._armAudioStartProbe();
     this._emit('onTrackStart', this, track);
   }
 
@@ -638,6 +641,15 @@ class GuildMusicSession {
 
     this.player.off('stateChange', this._audioProbeListener);
     this._audioProbeListener = null;
+  }
+
+  _syncAudioStartProbe() {
+    if (!this._audioProbeListener) return;
+
+    if (this.player.state && this.player.state.status === AudioPlayerStatus.Playing) {
+      timing.mark(this.guildId, 'play.audio');
+      this._disarmAudioStartProbe();
+    }
   }
 
   _releasePlayback() {
