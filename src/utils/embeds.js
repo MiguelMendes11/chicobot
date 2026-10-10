@@ -245,6 +245,44 @@ function buildMegaSenaGameEmbed({ dezenas = [], client = null } = {}) {
   return embed;
 }
 
+function formatMegaSenaBRL(value) {
+  if (!Number.isFinite(value) || value <= 0) return null;
+
+  const [integer, decimals] = value.toFixed(2).split('.');
+  const grouped = integer.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+
+  return `R$ ${grouped},${decimals}`;
+}
+
+function buildMegaSenaResultEmbed({ result = {}, client = null } = {}) {
+  const dezenas = Array.isArray(result.dezenas) ? result.dezenas : [];
+  const embed = new EmbedBuilder().setColor(THEME.colors.music);
+
+  applyAuthor(embed, `${THEME.brand} • Mega-Sena`, client);
+
+  embed.setTitle(truncate('🎯 Resultado da Mega-Sena', THEME.embedTitleMax));
+  embed.setDescription(dezenas.length ? `**${formatMegaSenaDezenas(dezenas)}**` : '*Dezenas indisponíveis.*');
+
+  embed.addFields(
+    { name: '🔢 Concurso', value: `#${result.concurso ?? '—'}`, inline: true },
+    { name: '📅 Data do sorteio', value: result.dataSorteio || '—', inline: true },
+    {
+      name: '🟡 Acumulou?',
+      value: result.acumulou ? 'Sim — acumulou para o próximo concurso.' : 'Não — houve ganhador.',
+      inline: true,
+    }
+  );
+
+  const estimativa = formatMegaSenaBRL(result.estimativaProximoPremio);
+  if (estimativa) {
+    embed.addFields({ name: '💰 Estimativa do próximo prêmio', value: estimativa, inline: true });
+  }
+
+  applyFooter(embed, 'resultado informativo — não representa previsão de sorteios futuros');
+
+  return embed;
+}
+
 function pausedMessage(track) {
   return `⏸️ **Música pausada.** ${trackLink(track)} — use \`/resume\` para continuar.`;
 }
@@ -302,6 +340,8 @@ module.exports = {
   buildQueuedEmbed,
   formatMegaSenaDezenas,
   buildMegaSenaGameEmbed,
+  formatMegaSenaBRL,
+  buildMegaSenaResultEmbed,
   pausedMessage,
   resumedMessage,
   skippedMessage,
