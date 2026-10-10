@@ -226,6 +226,25 @@ function buildQueuedEmbed({ track, position = 1, queueLength = 0, client = null 
   return embed;
 }
 
+function formatMegaSenaDezenas(dezenas) {
+  const list = Array.isArray(dezenas) ? dezenas : [];
+  return list.map((value) => String(value).padStart(2, '0')).join('  ');
+}
+
+function buildMegaSenaGameEmbed({ dezenas = [], client = null } = {}) {
+  const formatted = formatMegaSenaDezenas(dezenas);
+  const embed = new EmbedBuilder().setColor(THEME.colors.music);
+
+  applyAuthor(embed, `${THEME.brand} • Mega-Sena`, client);
+
+  embed.setTitle(truncate('🎯 Jogo da Mega-Sena', THEME.embedTitleMax));
+  embed.setDescription(formatted ? `**${formatted}**` : '*Nenhuma dezena gerada.*');
+
+  applyFooter(embed, 'diversão apenas — números aleatórios, sem garantia de prêmio');
+
+  return embed;
+}
+
 function pausedMessage(track) {
   return `⏸️ **Música pausada.** ${trackLink(track)} — use \`/resume\` para continuar.`;
 }
@@ -281,6 +300,8 @@ module.exports = {
   buildNowPlayingEmbed,
   buildQueueEmbed,
   buildQueuedEmbed,
+  formatMegaSenaDezenas,
+  buildMegaSenaGameEmbed,
   pausedMessage,
   resumedMessage,
   skippedMessage,
