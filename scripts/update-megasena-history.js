@@ -179,6 +179,12 @@ function partialPathOf(outPath) {
   return `${outPath}.partial.json`;
 }
 
+function countsSum(value) {
+  let total = 0;
+  for (let dezena = MIN_DEZENA; dezena <= MAX_DEZENA; dezena += 1) total += value[dezena];
+  return total;
+}
+
 function readPartial(partialPath, ateConcurso) {
   try {
     const parsed = JSON.parse(fs.readFileSync(partialPath, 'utf8'));
@@ -187,6 +193,7 @@ function readPartial(partialPath, ateConcurso) {
     if (!Number.isInteger(parsed.concluidoAte) || parsed.concluidoAte < 1) return null;
     if (parsed.concluidoAte > ateConcurso) return null;
     if (!isUsableCounts(parsed.contagensParciais)) return null;
+    if (countsSum(parsed.contagensParciais) !== parsed.concluidoAte * DRAW_COUNT) return null;
     return parsed;
   } catch {
     return null;

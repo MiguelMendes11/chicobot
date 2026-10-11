@@ -41,31 +41,36 @@ async function fetchLatestResult({
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  let response;
-
   try {
-    response = await fetchImpl(url, {
-      method: 'GET',
-      signal: controller.signal,
-      headers: { Accept: 'application/json', 'User-Agent': 'ChicoBot/1.0' },
-    });
-  } catch (error) {
-    if (isAbortError(error)) {
-      throw createMegaSenaError('TIMEOUT', { details: `${timeoutMs}ms`, cause: error });
+    let response;
+
+    try {
+      response = await fetchImpl(url, {
+        method: 'GET',
+        signal: controller.signal,
+        headers: { Accept: 'application/json', 'User-Agent': 'ChicoBot/1.0' },
+      });
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw createMegaSenaError('TIMEOUT', { details: `${timeoutMs}ms`, cause: error });
+      }
+      throw createMegaSenaError('UNAVAILABLE', { cause: error });
     }
-    throw createMegaSenaError('UNAVAILABLE', { cause: error });
+
+    assertUsableResponse(response);
+
+    if (typeof response.json !== 'function') throw createMegaSenaError('INVALID_RESPONSE');
+
+    try {
+      return await response.json();
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw createMegaSenaError('TIMEOUT', { details: `${timeoutMs}ms`, cause: error });
+      }
+      throw createMegaSenaError('INVALID_RESPONSE', { cause: error });
+    }
   } finally {
     clearTimeout(timer);
-  }
-
-  assertUsableResponse(response);
-
-  if (typeof response.json !== 'function') throw createMegaSenaError('INVALID_RESPONSE');
-
-  try {
-    return await response.json();
-  } catch (error) {
-    throw createMegaSenaError('INVALID_RESPONSE', { cause: error });
   }
 }
 
