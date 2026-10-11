@@ -283,6 +283,69 @@ function buildMegaSenaResultEmbed({ result = {}, client = null } = {}) {
   return embed;
 }
 
+const MEGASENA_STATS_WARNING =
+  '⚠️ **Aviso:** as frequências históricas **não aumentam** as chances de uma dezena sair no próximo sorteio — cada sorteio é independente.';
+
+function formatMegaSenaRanking(ranking) {
+  const items = Array.isArray(ranking) ? ranking : [];
+
+  if (items.length === 0) return '*Sem dados.*';
+
+  return items
+    .map((item) => {
+      const dezena = String(item.dezena).padStart(2, '0');
+      const contagem = Number.isInteger(item.contagem) ? item.contagem : 0;
+      return `**${dezena}** — ${contagem} ${contagem === 1 ? 'aparição' : 'aparições'}`;
+    })
+    .join('\n');
+}
+
+function formatMegaSenaSnapshotDate(geradoEm) {
+  const timestamp = typeof geradoEm === 'string' ? Date.parse(geradoEm) : Number.NaN;
+  if (Number.isNaN(timestamp)) return '—';
+
+  const date = new Date(timestamp);
+  const pad = (value) => String(value).padStart(2, '0');
+
+  return (
+    `${pad(date.getUTCDate())}/${pad(date.getUTCMonth() + 1)}/${date.getUTCFullYear()} ` +
+    `às ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())} UTC`
+  );
+}
+
+function buildMegaSenaStatsEmbed({ stats = {}, client = null } = {}) {
+  const embed = new EmbedBuilder().setColor(THEME.colors.music);
+
+  applyAuthor(embed, `${THEME.brand} • Mega-Sena`, client);
+
+  embed.setTitle(truncate('📊 Estatísticas da Mega-Sena', THEME.embedTitleMax));
+  embed.setDescription(truncate(MEGASENA_STATS_WARNING, 4096));
+
+  embed.addFields(
+    {
+      name: '🔺 Dezenas mais sorteadas',
+      value: truncate(formatMegaSenaRanking(stats.maisSorteadas), 1024),
+      inline: true,
+    },
+    {
+      name: '🔻 Dezenas menos sorteadas',
+      value: truncate(formatMegaSenaRanking(stats.menosSorteadas), 1024),
+      inline: true,
+    },
+    {
+      name: '🎟️ Último concurso no histórico',
+      value: Number.isInteger(stats.ateConcurso) ? `#${stats.ateConcurso}` : '—',
+      inline: true,
+    },
+    { name: '📅 Atualizado em', value: formatMegaSenaSnapshotDate(stats.geradoEm), inline: true },
+    { name: '📚 Fonte dos dados', value: truncate(stats.fonte || '—', 1024), inline: true }
+  );
+
+  applyFooter(embed, 'frequências históricas — não representa previsão de sorteios futuros');
+
+  return embed;
+}
+
 function pausedMessage(track) {
   return `⏸️ **Música pausada.** ${trackLink(track)} — use \`/resume\` para continuar.`;
 }
@@ -342,6 +405,10 @@ module.exports = {
   buildMegaSenaGameEmbed,
   formatMegaSenaBRL,
   buildMegaSenaResultEmbed,
+  MEGASENA_STATS_WARNING,
+  formatMegaSenaRanking,
+  formatMegaSenaSnapshotDate,
+  buildMegaSenaStatsEmbed,
   pausedMessage,
   resumedMessage,
   skippedMessage,

@@ -79,15 +79,17 @@ describe('/megasena jogo', () => {
     vi.restoreAllMocks();
   });
 
-  it('expõe o comando com os subcomandos jogo e resultado', () => {
+  it('expõe o comando com os subcomandos jogo, resultado e estatisticas', () => {
     const json = megasena.data.toJSON();
 
     expect(json.name).toBe('megasena');
-    expect(json.options).toHaveLength(2);
+    expect(json.options).toHaveLength(3);
     expect(json.options[0].name).toBe('jogo');
     expect(json.options[0].type).toBe(1);
     expect(json.options[1].name).toBe('resultado');
     expect(json.options[1].type).toBe(1);
+    expect(json.options[2].name).toBe('estatisticas');
+    expect(json.options[2].type).toBe(1);
   });
 
   it('responde com embed público contendo as 6 dezenas, cor, autor e aviso', async () => {

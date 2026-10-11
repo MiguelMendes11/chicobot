@@ -16,6 +16,10 @@ const MEGASENA_ERROR_MESSAGES = Object.freeze({
   SERVER_ERROR: 'O servidor da Caixa está instável neste momento. Tente novamente em alguns minutos.',
   INVALID_RESPONSE: 'A Caixa retornou uma resposta que não pôde ser lida. Tente novamente mais tarde.',
   INVALID_PAYLOAD: 'O resultado recebido não tem os dados esperados. Tente novamente mais tarde.',
+  HISTORY_UNAVAILABLE:
+    'O histórico de frequências da Mega-Sena ainda não está disponível, então não há estatísticas confiáveis para exibir. Nada é estimado ou inventado aqui — tente novamente após a atualização dos dados.',
+  HISTORY_INVALID:
+    'O arquivo de frequências da Mega-Sena está incompleto ou corrompido e não pôde ser usado. Para não exibir dados incorretos, as estatísticas ficam indisponíveis até a correção do histórico.',
 });
 
 function createMegaSenaError(code, context = {}) {

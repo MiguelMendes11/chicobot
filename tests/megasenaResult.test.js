@@ -557,10 +557,10 @@ describe('/megasena resultado — comando', () => {
     metadataCache.clear();
   });
 
-  it('registra os dois subcomandos', () => {
+  it('registra os três subcomandos', () => {
     const json = megasena.data.toJSON();
 
-    expect(json.options.map((option) => option.name)).toEqual(['jogo', 'resultado']);
+    expect(json.options.map((option) => option.name)).toEqual(['jogo', 'resultado', 'estatisticas']);
     expect(json.options[1].description).toContain('resultado oficial');
   });
 
