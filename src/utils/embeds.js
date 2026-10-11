@@ -226,6 +226,32 @@ function buildQueuedEmbed({ track, position = 1, queueLength = 0, client = null 
   return embed;
 }
 
+const MOEDA_FACES = Object.freeze({
+  cara: Object.freeze({
+    label: '🐸 Cara',
+    message: 'DEU CARA, PAE! O destino escolheu! 🐸',
+  }),
+  coroa: Object.freeze({
+    label: '🪙 Coroa',
+    message: 'DEU COROA! O Chico não erra... só sorteia! KKKKK',
+  }),
+});
+
+function buildMoedaEmbed({ result = 'cara', client = null } = {}) {
+  const face = MOEDA_FACES[result] ? result : 'cara';
+  const { label, message } = MOEDA_FACES[face];
+  const embed = new EmbedBuilder().setColor(THEME.colors.music);
+
+  applyAuthor(embed, `${THEME.brand} • Diversão`, client);
+
+  embed.setTitle(truncate('🪙 Cara ou Coroa', THEME.embedTitleMax));
+  embed.setDescription(`**${label}**\n\n${message}`);
+
+  applyFooter(embed, 'diversão apenas — 50% de chance para cada lado');
+
+  return embed;
+}
+
 function formatMegaSenaDezenas(dezenas) {
   const list = Array.isArray(dezenas) ? dezenas : [];
   return list.map((value) => String(value).padStart(2, '0')).join('  ');
@@ -401,6 +427,8 @@ module.exports = {
   buildNowPlayingEmbed,
   buildQueueEmbed,
   buildQueuedEmbed,
+  MOEDA_FACES,
+  buildMoedaEmbed,
   formatMegaSenaDezenas,
   buildMegaSenaGameEmbed,
   formatMegaSenaBRL,
